@@ -19,13 +19,13 @@ class CNN(torch.nn.Module):
     def __init__(self):
         super().__init__()
         #encoder
-        self.conv1 = torch.nn.Conv2d(in_channels=3,out_channels=64, kernel_size=3, stride=1, padding=1)
-        self.conv2 = torch.nn.Conv2d(in_channels=64,out_channels=128, kernel_size=3, stride=1, padding=1)
-        self.conv3 = torch.nn.Conv2d(in_channels=128,out_channels=256, kernel_size=3, stride=2, padding=1)
+        self.conv1 = torch.nn.Conv2d(in_channels=3,out_channels=8, kernel_size=3, stride=1, padding=1)
+        self.conv2 = torch.nn.Conv2d(in_channels=8,out_channels=16, kernel_size=3, stride=1, padding=1)
+        self.conv3 = torch.nn.Conv2d(in_channels=16,out_channels=32, kernel_size=3, stride=2, padding=1)
         #decoder
-        self.deconv1 = torch.nn.ConvTranspose2d(in_channels=256,out_channels=128,kernel_size=3,stride=2,padding=1)
-        self.deconv2 = torch.nn.ConvTranspose2d(in_channels=256,out_channels=64,kernel_size=3,stride=1,padding=1)
-        self.deconv3 = torch.nn.ConvTranspose2d(in_channels=128,out_channels=1,kernel_size=3,stride=1,padding=1)
+        self.deconv1 = torch.nn.ConvTranspose2d(in_channels=32,out_channels=16,kernel_size=3,stride=2,padding=1)
+        self.deconv2 = torch.nn.ConvTranspose2d(in_channels=32,out_channels=8,kernel_size=3,stride=1,padding=1)
+        self.deconv3 = torch.nn.ConvTranspose2d(in_channels=16,out_channels=1,kernel_size=3,stride=1,padding=1)
 
         self.act1 = torch.nn.ReLU()
 
