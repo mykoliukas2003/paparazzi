@@ -1,0 +1,39 @@
+<!DOCTYPE module SYSTEM "module.dtd">
+
+<module name="cv_estimate_depth" dir="computer_vision">
+  <doc>
+    <description>implements the surogate depth estimation nn for the AE4317 course.
+    based on the color object detector module. Optionally draws on image.
+    </description>
+    <define name="DEPTH_CAMERA" value="front_camera|bottom_camera" description="Video device to use"/>
+    <define name="DEPTH_CAMERA_FPS" value="0" description="Desired FPS (0: camera rate)"/>
+    <define name="DEPTH_DRAW" value="FALSE|TRUE" description="Whether or not to draw on image"/>
+    <define name="DEPTH_THRESHOLD" value="128" description="Threshold for determining safe depth"/>
+  </doc>
+
+  <settings>
+    <dl_settings>
+      <dl_settings name="depth_estimation">
+         <dl_setting var="depth_draw"  min="0" step="1" max="1" values="False|True" shortname="draw 1" />
+         <dl_setting var="depth_threshold"   min="0" step="1" max="255" shortname="depth_thr"/>
+      </dl_settings>
+    </dl_settings>
+  </settings>
+
+  <dep>
+    <depends>video_thread</depends>
+  </dep>
+
+  <header>
+    <file name="cv_estimate_depth.h"/>
+    <file name="depth_estim/depth_estimator.h"/> 
+  </header>
+
+  <init fun="estimate_depth_init()"/>
+  <periodic fun="estimate_depth_periodic()" freq="50"/>
+  <makefile target="ap|nps">
+    <file name="cv_estimate_depth.c"/>
+    <file name="depth_estim/depth_estimator.c"/>
+  </makefile>
+</module>
+

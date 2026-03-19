@@ -1,0 +1,29 @@
+<!DOCTYPE module SYSTEM "module.dtd">
+
+<module name="depth_avoider">
+  <doc>
+    <description>
+    This model implements control based on the depth estimation of a surrogate neural network for the AE4317 course.
+    </description>
+    <define name="ORANGE_AVOIDER_VISUAL_DETECTION_ID" value="ABI_BROADCAST" description="which VISUAL_DETECTION message to receive for orange pixel detection."/>
+  </doc>
+    <settings>
+    <dl_settings>
+      <dl_settings name="depth_avoider">
+         <dl_setting var="oa_color_count_frac" min="0" step="0.01" max="0.5"/>
+      </dl_settings>
+    </dl_settings>
+  </settings>
+  
+  <dep>
+    <depends>cv_estimate_depth</depends>
+  </dep>
+  <header>
+    <file name="depth_avoider.h"/>
+  </header>
+  <init fun="depth_avoider_init()"/>
+  <periodic fun="depth_avoider_periodic()" freq="4"/>
+  <makefile target="ap|nps">
+    <file name="depth_avoider.c"/>
+  </makefile>
+</module>
