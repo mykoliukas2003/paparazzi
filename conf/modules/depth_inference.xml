@@ -1,0 +1,33 @@
+<module name="depth_inference">
+  <doc>
+    <description>
+      CNN depth estimation via ONNX Runtime.
+      Runs inference in a background thread and publishes centre depth
+      as a VISUAL_DETECTION ABI message at 4 Hz.
+    </description>
+
+    <define name="DEPTH_SAVE_INTERVAL_SEC" value="5"
+            description="Seconds between saved depth images"/>
+    <define name="DEPTH_INFERENCE_ABI_ID"  value="1"
+            description="ABI sender ID for VISUAL_DETECTION messages"/>
+  </doc>
+
+  <header>
+    <file name="depth_inference.h"/>
+  </header>
+
+  <init    fun="depth_inference_init()"/>
+  <periodic fun="depth_inference_periodic()" freq="4" autorun="TRUE"/>
+
+  <makefile>
+    <file name="depth_inference.c"/>
+    <raw>
+$(TARGET).CFLAGS  += -I$(PAPARAZZI_SRC)/sw/ext/onnxruntime/include
+$(TARGET).LDFLAGS += -L$(PAPARAZZI_SRC)/sw/ext/onnxruntime -lonnxruntime
+ifeq ($(TARGET),ap)
+$(TARGET).LDFLAGS += -Wl,-rpath,/data/ftp/internal_000/paparazzi/lib
+endif
+    </raw>
+  </makefile>
+
+</module>
