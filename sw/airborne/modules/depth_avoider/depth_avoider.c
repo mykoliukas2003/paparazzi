@@ -72,12 +72,21 @@ const int16_t max_trajectory_confidence = 5; // number of consecutive negative o
 #define ORANGE_AVOIDER_VISUAL_DETECTION_ID ABI_BROADCAST
 #endif
 static abi_event color_detection_ev;
+
+
+float depth_left = 0.0f;
+float depth_straight = 0.0f;
+float depth_right = 0.0f;
+
 static void color_detection_cb(uint8_t __attribute__((unused)) sender_id,
-                               int16_t __attribute__((unused)) pixel_x, int16_t __attribute__((unused)) pixel_y,
-                               int16_t __attribute__((unused)) pixel_width, int16_t __attribute__((unused)) pixel_height,
-                               int32_t quality, int16_t __attribute__((unused)) extra)
+                               int16_t pixel_x, int16_t pixel_y,
+                               int16_t pixel_width, int16_t __attribute__((unused)) pixel_height,
+                               int32_t __attribute__((unused)) quality, int16_t __attribute__((unused)) extra)
 {
-  color_count = quality;
+  // scale the incoming integers back into floats
+  depth_left = ((float)pixel_x) / 1000.0f;
+  depth_straight = ((float)pixel_y) / 1000.0f;
+  depth_right = ((float)pixel_width) / 1000.0f;
 }
 
 /*
@@ -103,74 +112,71 @@ void depth_avoider_periodic(void)
     return;
   }
 
-  // compute current color thresholds
-  int32_t color_count_threshold = oa_color_count_frac * front_camera.output_size.w * front_camera.output_size.h;
+  // Print received values to monitor what the drone is seeing
+  VERBOSE_PRINT("Depths - L: %f, S: %f, R: %f | State: %d\n", depth_left, depth_straight, depth_right, navigation_state);
 
-  VERBOSE_PRINT("Color_count: %d  threshold: %d state: %d \n", color_count, color_count_threshold, navigation_state);
-
-  // update our safe confidence using color threshold
-  if(color_count < color_count_threshold){
-    obstacle_free_confidence++;
-  } else {
-    obstacle_free_confidence -= 2;  // be more cautious with positive obstacle detections
-  }
-
-  // bound obstacle_free_confidence
-  Bound(obstacle_free_confidence, 0, max_trajectory_confidence);
-
-  float moveDistance = fminf(maxDistance, 0.2f * obstacle_free_confidence);
+  float safe_distance_threshold = 2.0f;
+  float moveDistance = 0.5f; // Fixed the variable name
 
   switch (navigation_state){
     case SAFE:
-      // Move waypoint forward
-      moveWaypointForward(WP_TRAJECTORY, 1.5f * moveDistance);
-      if (!InsideObstacleZone(WaypointX(WP_TRAJECTORY),WaypointY(WP_TRAJECTORY))){
-        navigation_state = OUT_OF_BOUNDS;
-      } else if (obstacle_free_confidence == 0){
+      if (depth_straight < safe_distance_threshold) {
+        // Obstacle straight ahead!
         navigation_state = OBSTACLE_FOUND;
       } else {
-        moveWaypointForward(WP_GOAL, moveDistance);
+        // Path is clear, move waypoint forward
+        moveWaypointForward(WP_TRAJECTORY, 1.5f * moveDistance);
+        if (!InsideObstacleZone(WaypointX(WP_TRAJECTORY),WaypointY(WP_TRAJECTORY))){
+          navigation_state = OUT_OF_BOUNDS;
+        } else {
+          moveWaypointForward(WP_GOAL, moveDistance);
+        }
       }
-
       break;
+
     case OBSTACLE_FOUND:
-      // stop
+      // Stop moving forward
       waypoint_move_here_2d(WP_GOAL);
       waypoint_move_here_2d(WP_TRAJECTORY);
 
-      // randomly select new search direction
-      chooseRandomIncrementAvoidance();
+      // Decide which way to turn based on Left and Right depths
+      if (depth_left > depth_right) {
+        // Left has more open space, turn CCW (Counter-Clockwise)
+        heading_increment = -15.0f; // Degrees to turn
+        VERBOSE_PRINT("Obstacle! Turning LEFT.\n");
+      } else {
+        // Right has more open space, turn CW (Clockwise)
+        heading_increment = 15.0f; 
+        VERBOSE_PRINT("Obstacle! Turning RIGHT.\n");
+      }
 
       navigation_state = SEARCH_FOR_SAFE_HEADING;
-
       break;
+
     case SEARCH_FOR_SAFE_HEADING:
+      // Command the turn
       increase_nav_heading(heading_increment);
 
-      // make sure we have a couple of good readings before declaring the way safe
-      if (obstacle_free_confidence >= 2){
+      // Check if the new heading is safe
+      if (depth_straight >= safe_distance_threshold){
+        VERBOSE_PRINT("Path clear again! Resuming forward flight.\n");
         navigation_state = SAFE;
       }
       break;
+
     case OUT_OF_BOUNDS:
-      increase_nav_heading(heading_increment);
+      // Logic to return to the arena (Keep this the same as you had it)
+      increase_nav_heading(15.0f);
       moveWaypointForward(WP_TRAJECTORY, 1.5f);
 
       if (InsideObstacleZone(WaypointX(WP_TRAJECTORY),WaypointY(WP_TRAJECTORY))){
-        // add offset to head back into arena
-        increase_nav_heading(heading_increment);
-
-        // reset safe counter
-        obstacle_free_confidence = 0;
-
-        // ensure direction is safe before continuing
         navigation_state = SEARCH_FOR_SAFE_HEADING;
       }
       break;
+      
     default:
       break;
   }
-  return;
 }
 
 /*

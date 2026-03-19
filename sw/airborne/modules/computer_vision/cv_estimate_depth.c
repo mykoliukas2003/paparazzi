@@ -188,6 +188,13 @@ static struct image_t *depth_estim(struct image_t *img)
   entry(input, tensor_output);
   printf("model output: %f, %f, %f\n", tensor_output[0][0], tensor_output[0][1], tensor_output[0][2]);
   
+  pthread_mutex_lock(&mutex);
+  global_depths.depth1 = tensor_output[0][0];
+  global_depths.depth2 = tensor_output[0][1];
+  global_depths.depth3 = tensor_output[0][2];
+  global_depths.updated = true;
+  pthread_mutex_unlock(&mutex);
+
   /*
   pthread_mutex_lock(&mutex);
   global_filters[filter-1].color_count = count;
@@ -328,18 +335,20 @@ uint32_t find_object_centroid(struct image_t *img, int32_t* p_xc, int32_t* p_yc,
 
 void estimate_depth_periodic(void)
 {
-  static struct color_object_t local_filters[2];
   static struct depths_t local_depths;
   pthread_mutex_lock(&mutex);
-  memcpy(local_filters, global_filters, 2*sizeof(struct color_object_t));
   memcpy(&local_depths, &global_depths, sizeof(struct depths_t));
+  global_depths.updated = false; // set to false since we have now copied the updated value to local variable
   pthread_mutex_unlock(&mutex);
 
   if(local_depths.updated){
-    AbiSendMsgVISUAL_DETECTION(COLOR_OBJECT_DETECTION1_ID, local_filters[0].x_c, local_filters[0].y_c,
-        0, 0, local_filters[0].color_count, 0);
-    AbiSendMsgVISUAL_DETECTION(COLOR_OBJECT_DETECTION1_ID, local_depths.depth1, local_depths.depth2, local_depths.depth3, 0, 0, 0);
+    int16_t send_left = (int16_t)(local_depths.depth1 * 1000.0f);
+    int16_t send_straight = (int16_t)(local_depths.depth2 * 1000.0f);
+    int16_t send_right = (int16_t)(local_depths.depth3 * 1000.0f);
+    printf("[Depth Estimator] Sending ABI -> L: %d, S: %d, R: %d\n", send_left, send_straight, send_right);
+
+    AbiSendMsgVISUAL_DETECTION(COLOR_OBJECT_DETECTION1_ID, send_left, send_straight, send_right, 0, 0, 0);
     //does this save to memory? shouldnt I use a mutex to set this to false? now done like in an example in the cv_detect_color_object.c file
-    local_depths.updated = false;
+    //local_depths.updated = false; // we dont update this since global takes care of this
   }
 }
