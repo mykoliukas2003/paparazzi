@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 import glob
+import matplotlib.pyplot as plt
 
 
 
@@ -18,3 +19,10 @@ for f in images:
 
     integral = cv2.integral(greyscale)
     print('integral=',integral)
+    plt.figure(figsize=(10,5))
+    plt.imshow(integral, cmap='gray')
+    plt.show()
+    plt.figure(figsize=(10,5))
+    plt.imshow(greyscale, cmap='gray')
+    plt.show()
+    
