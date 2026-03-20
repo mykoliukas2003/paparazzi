@@ -167,25 +167,20 @@ static struct image_t *depth_estim(struct image_t *img)
   
   //if needed reshape the image to fit the model input dimensions.
   //also convert to float
-  int img_w = img->w;
-  int img_h = img->h;
+  //int img_w = img->w;
+  //int img_h = img->h;
   uint8_t *img_buf = (uint8_t *)img->buf;
-  float input[1][3][520][240];
-  for(int i = 0; i < img->w * img->h * 2; i+=2){
-    uint8_t u = img_buf[i];
-    uint8_t y = img_buf[i+1];
-    uint8_t v = img_buf[i+2];//just wrong but for testing the wrapper
-    int pixel_index = i/2;
-    int x = pixel_index % img_w;
-    int y_coord = pixel_index / img_w;
-    input[0][0][x][y_coord] = (float) y;
-    input[0][1][x][y_coord] = (float) u;
-    input[0][2][x][y_coord] = (float) v;
+  float tensor_input[1][249600];
+  for(int i = 0; i < 249600; i++){
+    tensor_input[0][i] = (float)img_buf[i];
   }
+  
 
 
   float tensor_output[1][3];
-  entry(input, tensor_output);
+  printf(tensor_input);
+
+  entry(tensor_input, tensor_output);
   printf("model output: %f, %f, %f\n", tensor_output[0][0], tensor_output[0][1], tensor_output[0][2]);
   
   pthread_mutex_lock(&mutex);
@@ -194,7 +189,7 @@ static struct image_t *depth_estim(struct image_t *img)
   global_depths.depth3 = tensor_output[0][2];
   global_depths.updated = true;
   pthread_mutex_unlock(&mutex);
-
+  
   /*
   pthread_mutex_lock(&mutex);
   global_filters[filter-1].color_count = count;
@@ -235,7 +230,7 @@ void estimate_depth_init(void)
   pthread_mutex_init(&mutex, NULL);
   */
  printf("Initializing depth estimation module\n");
- printf("Depth camera: %s, Depth camera FPS: %d, Depth draw: %d, Depth threshold: %d\n", DEPTH_CAMERA, DEPTH_CAMERA_FPS, depth_draw, depth_threshold);
+ //printf("Depth camera: %s, Depth camera FPS: %d, Depth draw: %d, Depth threshold: %d\n", DEPTH_CAMERA, DEPTH_CAMERA_FPS, depth_draw, depth_threshold);
 #ifdef DEPTH_CAMERA
 #ifdef DEPTH_DRAW
   depth_draw = DEPTH_DRAW;

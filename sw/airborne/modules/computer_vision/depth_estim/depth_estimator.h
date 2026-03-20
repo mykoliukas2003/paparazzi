@@ -22,4 +22,4 @@ lets pray this works
 #define FUNC_PREFIX static inline
 #endif
 */
-void entry(const float tensor_input[1][3][520][240], float tensor_output[1][3]);
+void entry(const float tensor_input[1][249600], float tensor_output[1][3]);
