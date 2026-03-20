@@ -37,7 +37,7 @@
 #include <math.h>
 #include "pthread.h"
 
-#define DEPTH_ESTIMATOR_VERBOSE TRUE
+#define DEPTH_ESTIMATOR_VERBOSE FALSE
 #define PRINT(string,...) fprintf(stderr, "[depth_estimator->%s()] " string,__FUNCTION__ , ##__VA_ARGS__)
 #if DEPTH_ESTIMATOR_VERBOSE
 #define VERBOSE_PRINT PRINT
@@ -162,7 +162,7 @@ static struct image_t *depth_estim(struct image_t *img)
   int32_t x_c, y_c;
   */
   // call on the model
-  printf("Running depth estimation on image of size %d x %d\n", img->w, img->h);
+  //printf("Running depth estimation on image of size %d x %d\n", img->w, img->h);
   
   
   //if needed reshape the image to fit the model input dimensions.
@@ -178,10 +178,11 @@ static struct image_t *depth_estim(struct image_t *img)
 
 
   float tensor_output[1][3];
-  printf(tensor_input);
+  //printf(tensor_input);
 
   entry(tensor_input, tensor_output);
-  printf("model output: %f, %f, %f\n", tensor_output[0][0], tensor_output[0][1], tensor_output[0][2]);
+  //printf("model output: %f, %f, %f\n", tensor_output[0][0], tensor_output[0][1], tensor_output[0][2]);
+  VERBOSE_PRINT("Model output: %f, %f, %f\n", tensor_output[0][0], tensor_output[0][1], tensor_output[0][2]);
   
   pthread_mutex_lock(&mutex);
   global_depths.depth1 = tensor_output[0][0];
@@ -260,73 +261,7 @@ void estimate_depth_init(void)
 */
 }
 
-/*
- * find_object_centroid
- *
- * Finds the centroid of pixels in an image within filter bounds.
- * Also returns the amount of pixels that satisfy these filter bounds.
- *
- * @param img - input image to process formatted as YUV422.
- * @param p_xc - x coordinate of the centroid of color object
- * @param p_yc - y coordinate of the centroid of color object
- * @param lum_min - minimum y value for the filter in YCbCr colorspace
- * @param lum_max - maximum y value for the filter in YCbCr colorspace
- * @param cb_min - minimum cb value for the filter in YCbCr colorspace
- * @param cb_max - maximum cb value for the filter in YCbCr colorspace
- * @param cr_min - minimum cr value for the filter in YCbCr colorspace
- * @param cr_max - maximum cr value for the filter in YCbCr colorspace
- * @param draw - whether or not to draw on image
- * @return number of pixels of image within the filter bounds.
- */
-uint32_t find_object_centroid(struct image_t *img, int32_t* p_xc, int32_t* p_yc, bool draw,
-                              uint8_t lum_min, uint8_t lum_max,
-                              uint8_t cb_min, uint8_t cb_max,
-                              uint8_t cr_min, uint8_t cr_max)
-{
-  uint32_t cnt = 0;
-  uint32_t tot_x = 0;
-  uint32_t tot_y = 0;
-  uint8_t *buffer = img->buf;
 
-  // Go through all the pixels
-  for (uint16_t y = 0; y < img->h; y++) {
-    for (uint16_t x = 0; x < img->w; x ++) {
-      // Check if the color is inside the specified values
-      uint8_t *yp, *up, *vp;
-      if (x % 2 == 0) {
-        // Even x
-        up = &buffer[y * 2 * img->w + 2 * x];      // U
-        yp = &buffer[y * 2 * img->w + 2 * x + 1];  // Y1
-        vp = &buffer[y * 2 * img->w + 2 * x + 2];  // V
-        //yp = &buffer[y * 2 * img->w + 2 * x + 3]; // Y2
-      } else {
-        // Uneven x
-        up = &buffer[y * 2 * img->w + 2 * x - 2];  // U
-        //yp = &buffer[y * 2 * img->w + 2 * x - 1]; // Y1
-        vp = &buffer[y * 2 * img->w + 2 * x];      // V
-        yp = &buffer[y * 2 * img->w + 2 * x + 1];  // Y2
-      }
-      if ( (*yp >= lum_min) && (*yp <= lum_max) &&
-           (*up >= cb_min ) && (*up <= cb_max ) &&
-           (*vp >= cr_min ) && (*vp <= cr_max )) {
-        cnt ++;
-        tot_x += x;
-        tot_y += y;
-        if (draw){
-          *yp = 255;  // make pixel brighter in image
-        }
-      }
-    }
-  }
-  if (cnt > 0) {
-    *p_xc = (int32_t)roundf(tot_x / ((float) cnt) - img->w * 0.5f);
-    *p_yc = (int32_t)roundf(img->h * 0.5f - tot_y / ((float) cnt));
-  } else {
-    *p_xc = 0;
-    *p_yc = 0;
-  }
-  return cnt;
-}
 
 void estimate_depth_periodic(void)
 {
@@ -340,7 +275,7 @@ void estimate_depth_periodic(void)
     int16_t send_left = (int16_t)(local_depths.depth1 * 1000.0f);
     int16_t send_straight = (int16_t)(local_depths.depth2 * 1000.0f);
     int16_t send_right = (int16_t)(local_depths.depth3 * 1000.0f);
-    printf("[Depth Estimator] Sending ABI -> L: %d, S: %d, R: %d\n", send_left, send_straight, send_right);
+    VERBOSE_PRINT("[Depth Estimator] Sending ABI -> L: %d, S: %d, R: %d\n", send_left, send_straight, send_right);
 
     AbiSendMsgVISUAL_DETECTION(COLOR_OBJECT_DETECTION1_ID, send_left, send_straight, send_right, 0, 0, 0);
     //does this save to memory? shouldnt I use a mutex to set this to false? now done like in an example in the cv_detect_color_object.c file

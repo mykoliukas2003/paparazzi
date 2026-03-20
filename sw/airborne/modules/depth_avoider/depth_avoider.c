@@ -51,6 +51,7 @@ enum navigation_state_t {
 
 // define settings
 float oa_color_count_frac = 0.18f;
+float safe_distance_threshold = 30.0f;
 
 // define and initialise global variables
 enum navigation_state_t navigation_state = SEARCH_FOR_SAFE_HEADING;
@@ -115,7 +116,7 @@ void depth_avoider_periodic(void)
   // Print received values to monitor what the drone is seeing
   VERBOSE_PRINT("Depths - L: %f, S: %f, R: %f | State: %d\n", depth_left, depth_straight, depth_right, navigation_state);
 
-  float safe_distance_threshold = 2.0f;
+  //float safe_distance_threshold = 10.0f;
   float moveDistance = 0.5f; // Fixed the variable name
 
   switch (navigation_state){
@@ -123,6 +124,7 @@ void depth_avoider_periodic(void)
       if (depth_straight < safe_distance_threshold) {
         // Obstacle straight ahead!
         navigation_state = OBSTACLE_FOUND;
+        VERBOSE_PRINT("Obstacle detected ahead! Depth: %f\n", depth_straight);
       } else {
         // Path is clear, move waypoint forward
         moveWaypointForward(WP_TRAJECTORY, 1.5f * moveDistance);

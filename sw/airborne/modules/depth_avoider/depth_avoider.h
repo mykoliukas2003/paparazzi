@@ -15,6 +15,7 @@
 
 // settings
 extern float oa_color_count_frac;
+extern float safe_distance_threshold;
 
 // functions
 extern void depth_avoider_init(void);
