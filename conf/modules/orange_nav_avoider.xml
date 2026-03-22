@@ -1,0 +1,37 @@
+<!DOCTYPE module SYSTEM "module.dtd">
+
+<module name="orange_nav_avoider" dir="orange_nav_avoider">
+  <doc>
+    <description>
+      Orange pixel-based obstacle avoider with trajectory following.
+      Combines orange_avoider vision with circle, figure-eight, and lawnmower trajectories.
+    </description>
+    <define name="ORANGE_AVOIDER_VISUAL_DETECTION_ID" value="ABI_BROADCAST"
+            description="Which VISUAL_DETECTION message to receive."/>
+  </doc>
+
+  <settings>
+    <dl_settings>
+      <dl_settings name="orange_nav_avoider">
+        <dl_setting var="oa_color_count_frac"  min="0"   step="0.01" max="0.5"/>
+        <dl_setting var="maxDistance"          min="0.1" step="0.05" max="3.0"/>
+        <dl_setting var="maxheading_increment" min="1"   step="1"    max="45"/>
+        <dl_setting var="traj_circle_radius"   min="0.5" step="0.1"  max="3.5"/>
+        <dl_setting var="traj_eight_scale"     min="0.5" step="0.1"  max="3.5"/>
+      </dl_settings>
+    </dl_settings>
+  </settings>
+
+  <dep>
+    <depends>cv_detect_color_object</depends>
+  </dep>
+
+  <header>
+    <file name="orange_nav_avoider.h"/>
+  </header>
+  <init fun="orange_nav_avoider_init()"/>
+  <periodic fun="orange_nav_avoider_periodic()" freq="4"/>
+  <makefile target="ap|nps">
+    <file name="orange_nav_avoider.c"/>
+  </makefile>
+</module>

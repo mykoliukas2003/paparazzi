@@ -11,6 +11,7 @@
 #include <time.h>
 #include <stdio.h>
 
+#define NAV_C
 #include "generated/flight_plan.h"
 
 #define ORANGE_AVOIDER_VERBOSE TRUE

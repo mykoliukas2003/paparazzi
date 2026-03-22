@@ -30,16 +30,6 @@
         <arg flag="sm600.xml"/>
         <arg flag="-d 0"/>
       </program>
-      <program name="RtpViewer">
-        <arg flag="-s" constant="1"/>
-        <arg flag="-r" constant="3"/>
-      </program>
-      <program name="VLC">
-        <arg flag="./sw/tools/rtp_viewer/rtp_5000.sdp"/>
-      </program>
-      <program name="VLC">
-        <arg flag="./sw/tools/rtp_viewer/rtp_6000.sdp"/>
-      </program>
       <program name="GST">
         <arg flag="udpsrc"/>
         <arg flag="port=5000"/>
@@ -68,21 +58,11 @@
         <arg flag="-d 0"/>
       </program>
       <program name="Gazebo"/>
-      <program name="RtpViewer">
-        <arg flag="-s" constant="1"/>
-        <arg flag="-r" constant="3"/>
-      </program>
       <program name="GST">
         <arg flag="udpsrc"/>
         <arg flag="port=5000"/>
         <arg flag="caps=application/x-rtp,payload=26"/>
         <arg flag="! rtpjpegdepay ! jpegdec ! videoflip method=counterclockwise ! autovideosink"/>
-      </program>
-      <program name="VLC">
-        <arg flag="./sw/tools/rtp_viewer/rtp_5000.sdp"/>
-      </program>
-      <program name="VLC">
-        <arg flag="./sw/tools/rtp_viewer/rtp_6000.sdp"/>
       </program>
     </session>
     <session name="Simulation - the way Gintas preffers">

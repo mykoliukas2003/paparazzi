@@ -75,7 +75,7 @@
       <define name="DEPTH_CAMERA_FPS" value="0"/>
       <define name="DEPTH_DRAW" value="1"/>
     </module>
-    <module name="depth_avoider">
+    <module name="depth_nav_avoider">
       <define name="ORANGE_AVOIDER_VISUAL_DETECTION_ID" value="COLOR_OBJECT_DETECTION1_ID"/>
     </module>
     <module name="video_rtp_stream">

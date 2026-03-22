@@ -1,0 +1,36 @@
+<!DOCTYPE module SYSTEM "module.dtd">
+
+<module name="depth_nav_avoider">
+  <doc>
+    <description>
+    Combined depth and confidence based obstacle avoider.
+    Uses depth estimates (left/straight/right) from cv_estimate_depth
+    with a multi-state confidence system for robust obstacle avoidance.
+    </description>
+    <define name="ORANGE_AVOIDER_VISUAL_DETECTION_ID" value="ABI_BROADCAST" 
+            description="Which VISUAL_DETECTION message to receive for depth estimates."/>
+  </doc>
+
+  <settings>
+    <dl_settings>
+      <dl_settings name="depth_nav_avoider">
+        <dl_setting var="safe_distance_threshold"    min="0.01" step="0.5"  max="100"/>
+        <dl_setting var="caution_distance_threshold" min="0.01" step="0.5"  max="100"/>
+        <dl_setting var="maxDistance"                min="0.1"  step="0.05" max="3.0"/>
+      </dl_settings>
+    </dl_settings>
+  </settings>
+
+  <dep>
+    <depends>cv_estimate_depth</depends>
+  </dep>
+
+  <header>
+    <file name="depth_nav_avoider.h"/>
+  </header>
+  <init fun="depth_nav_avoider_init()"/>
+  <periodic fun="depth_nav_avoider_periodic()" freq="4"/>
+  <makefile target="ap|nps">
+    <file name="depth_nav_avoider.c"/>
+  </makefile>
+</module>
