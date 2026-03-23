@@ -21,9 +21,9 @@ class CNN(torch.nn.Module):
         #encoder
         self.conv1 = torch.nn.Conv2d(in_channels=3,out_channels=8, kernel_size=3, stride=1, padding=1)
         self.conv2 = torch.nn.Conv2d(in_channels=8,out_channels=16, kernel_size=3, stride=1, padding=1)
-        self.conv3 = torch.nn.Conv2d(in_channels=16,out_channels=32, kernel_size=3, stride=2, padding=1)
+        self.conv3 = torch.nn.Conv2d(in_channels=16,out_channels=32, kernel_size=3, stride=2, padding=1) #Changed kernel to 4 for better stride compatibility 
         #decoder
-        self.deconv1 = torch.nn.ConvTranspose2d(in_channels=32,out_channels=16,kernel_size=3,stride=2,padding=1)
+        self.deconv1 = torch.nn.ConvTranspose2d(in_channels=32,out_channels=16,kernel_size=4,stride=2,padding=1)
         self.deconv2 = torch.nn.ConvTranspose2d(in_channels=32,out_channels=8,kernel_size=3,stride=1,padding=1)
         self.deconv3 = torch.nn.ConvTranspose2d(in_channels=16,out_channels=1,kernel_size=3,stride=1,padding=1)
 
@@ -38,13 +38,12 @@ class CNN(torch.nn.Module):
         x = self.act1(self.conv3(x))
 
         x = self.act1(self.deconv1(x))
-        x = torch.nn.functional.interpolate(x, size=cross2.shape[2:], mode='bilinear', align_corners=False)
+
         x = torch.cat([x, cross2],dim=1)
         x = self.act1(self.deconv2(x))
-        x = torch.nn.functional.interpolate(x, size=cross1.shape[2:], mode='bilinear', align_corners=False)
+
         x = torch.cat([x, cross1],dim=1)
-        x = self.act1(self.deconv3(x))
-        y = torch.nn.functional.interpolate(x, size=cross1.shape[2:], mode='bilinear', align_corners=False)
+        y = self.act1(self.deconv3(x))
 
         return y
 
@@ -74,6 +73,9 @@ if __name__ == '__main__':
             image = Image.open(image_path).convert("YCbCr")
             target = Image.open(target_path).convert("L")
 
+            image = image.crop((80,0,160,520))
+            target = target.crop((80,0,160,520))
+
             if self.transform:
                 image = self.transform(image)
                 target = self.transform(target)
@@ -81,7 +83,7 @@ if __name__ == '__main__':
             return image, target
 
     #Dataloading
-    transform = transforms.ToTensor()
+    transform = transforms.Compose([transforms.Resize((80,520)),transforms.ToTensor()])
 
     dataset = ImageDataset('./Data/Images/','./Data/datasets_depth/depth_map/',transform=transform)
 

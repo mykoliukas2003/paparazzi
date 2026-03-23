@@ -9,12 +9,13 @@ from torchsummary import summary
 import matplotlib.pyplot as plt
 import json
 import time
+import numpy as np
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print("Using device:", device)
 
 model = CNN()
-model_path = "depth_model (8 in channels).pth" #Heavier model that could still work but on slower side
+model_path = "depth_model (4).pth" 
 
 state_dict = torch.load(model_path, map_location=device)
 model.load_state_dict(state_dict)
@@ -28,16 +29,16 @@ transform = transforms.ToTensor()
 # image = transform(image)
 # image = image.unsqueeze(0).to(device)
 
-with open("test_filenames (2).json", "r") as f:
+with open("test_filenames (3).json", "r") as f:
     test_data = json.load(f)
 
 # with torch.no_grad():
 #     pred = model(image)
 
 loss_fn = torch.nn.MSELoss()
-
-
-for file in test_data[50:61]:
+losses = []
+forward_pass_times = []
+for file in test_data[30:41]:
     path = 'Data/Images/{}'.format(file)
     print(path)
     img = Image.open(path).convert("RGB")
@@ -54,11 +55,12 @@ for file in test_data[50:61]:
 
     end = time.time()
     loss = loss_fn(pred,target)
-    print(loss)
-    print("Forward Pass Time:", end-start)
+    losses.append(loss)
+    forward_pass_times.append(end-start)
     depth = pred.squeeze().cpu().numpy()
     depth = (depth - depth.min()) / (depth.max() - depth.min())
     
+
     plt.subplot(1,2,1)
     plt.imshow(depth, cmap = 'gray')
 
@@ -68,7 +70,8 @@ for file in test_data[50:61]:
 
     plt.show()
 
-
+print("AVG LOSS: ", np.mean(losses))
+print("AVG FORWARD PASS TIME: ", np.mean(forward_pass_times) )
 summary(model, input_size = (3,80,520))
 
 
