@@ -130,9 +130,9 @@ static void depth_detection_cb(uint8_t __attribute__((unused)) sender_id,
                                 int32_t __attribute__((unused)) quality,
                                 int16_t __attribute__((unused)) extra)
 {
-  depth_left     = ((float)pixel_x)     / 1000.0f;
-  depth_straight = ((float)pixel_y)     / 1000.0f;
-  depth_right    = ((float)pixel_width) / 1000.0f;
+  depth_left     = ((float)pixel_x)     / 100.0f;
+  depth_straight = ((float)pixel_y)     / 100.0f;
+  depth_right    = ((float)pixel_width) / 100.0f;
 }
 
 /* ================================ */

@@ -70,7 +70,7 @@ uint8_t cod_cb_max2 = 0;
 uint8_t cod_cr_min2 = 0;
 uint8_t cod_cr_max2 = 0;
 */
-bool depth_draw = false;
+bool depth_draw = true;
 uint8_t depth_threshold = 128;
 
 // define global variables
@@ -199,6 +199,26 @@ static struct image_t *depth_estim(struct image_t *img)
   global_filters[filter-1].updated = true;
   pthread_mutex_unlock(&mutex);
   */
+  // make the square where the model estimates the depth brighter in the image for debugging
+  if(depth_draw){
+    for(int x = 50; x < 101; x++){
+      //bbox left
+      for(int y = 45; y < 45+150+1; y++){
+        int idx = y * img->w + x;
+        img_buf[idx*2+1] = (int)tensor_output[0][0];
+      }
+      //bbox center
+      for(int y = 45+150+1; y < 45+150+1+150+1; y++){
+        int idx = y * img->w + x;
+        img_buf[idx*2+1] = (int)tensor_output[0][1];
+      }
+      //bbox right
+      for(int y = 45+150+1+150+1; y < 45+150+1+150+1+150+1; y++){
+        int idx = y * img->w + x;
+        img_buf[idx*2+1] = (int)tensor_output[0][2];
+      }
+    }
+  }
   return img;
 }
 //try if the wrapper is the issue
@@ -222,14 +242,14 @@ struct image_t *object_detector2(struct image_t *img, uint8_t camera_id __attrib
 */
 void estimate_depth_init(void)
 {
-  
+  /*
   memset(global_filters, 0, 2*sizeof(struct color_object_t));
   pthread_mutex_init(&mutex, NULL);
-
-  /*
-  memset(global_depths, 0, sizeof(struct depths_t));
+*/
+  
+  memset(&global_depths, 0, sizeof(struct depths_t));
   pthread_mutex_init(&mutex, NULL);
-  */
+  
  printf("Initializing depth estimation module\n");
  //printf("Depth camera: %s, Depth camera FPS: %d, Depth draw: %d, Depth threshold: %d\n", DEPTH_CAMERA, DEPTH_CAMERA_FPS, depth_draw, depth_threshold);
 #ifdef DEPTH_CAMERA
@@ -272,9 +292,9 @@ void estimate_depth_periodic(void)
   pthread_mutex_unlock(&mutex);
 
   if(local_depths.updated){
-    int16_t send_left = (int16_t)(local_depths.depth1 * 1000.0f);
-    int16_t send_straight = (int16_t)(local_depths.depth2 * 1000.0f);
-    int16_t send_right = (int16_t)(local_depths.depth3 * 1000.0f);
+    int16_t send_left = (int16_t)(local_depths.depth1 * 100.0f);
+    int16_t send_straight = (int16_t)(local_depths.depth2 * 100.0f);
+    int16_t send_right = (int16_t)(local_depths.depth3 * 100.0f);
     VERBOSE_PRINT("[Depth Estimator] Sending ABI -> L: %d, S: %d, R: %d\n", send_left, send_straight, send_right);
 
     AbiSendMsgVISUAL_DETECTION(COLOR_OBJECT_DETECTION1_ID, send_left, send_straight, send_right, 0, 0, 0);
