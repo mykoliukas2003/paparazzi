@@ -74,12 +74,12 @@ enum trajectory_type_t {
  * The CNN outputs values in a model-specific range (typically [0, 255]).
  * Higher = more free space.  Tune these to your model's output scale.
  */
-float cnn_safe_distance_threshold    = 130.0f;  // hard stop
-float cnn_caution_distance_threshold = 150.0f;  // slow down
-float cnn_caution_exit_threshold     = 165.0f;  // hysteresis exit from CAUTION
+float cnn_safe_distance_threshold    = 0.48f;   // hard stop
+float cnn_caution_distance_threshold = 0.53f;   // slow down
+float cnn_caution_exit_threshold     = 0.57f;   // hysteresis exit
 
 /* Low-pass filter on straight depth (0 = no filter, 1 = frozen) */
-#define DEPTH_FILTER_ALPHA 0.6f
+float cnn_depth_filter_alpha = 0.7f;
 
 float cnn_max_distance = 1.0f;  // max forward displacement per cycle [m]
 
@@ -205,8 +205,8 @@ void cnn_avoid_periodic(void)
   update_depths_from_nav_vector();
 
   /* ---- Low-pass filter on straight depth ---- */
-  depth_straight_filtered = DEPTH_FILTER_ALPHA * depth_straight
-                          + (1.0f - DEPTH_FILTER_ALPHA) * depth_straight_filtered;
+  depth_straight_filtered = cnn_depth_filter_alpha * depth_straight
+                          + (1.0f - cnn_depth_filter_alpha) * depth_straight_filtered;
 
   VERBOSE_PRINT("Depths L:%.2f S:%.2f(f:%.2f) R:%.2f | Conf:%d | State:%d | Traj:%d\n",
                 depth_left, depth_straight, depth_straight_filtered, depth_right,

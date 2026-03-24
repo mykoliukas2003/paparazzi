@@ -183,7 +183,7 @@ static bool cnn_vision_onnx_init_once(void)
   status = ort->CreateSessionOptions(&g_sess_opts);
   if (status) goto fail;
 
-  status = ort->CreateSession(g_env, "depth_model.onnx", g_sess_opts, &g_session);
+  status = ort->CreateSession(g_env, "/home/bonkata/paparazzi/CVCNN/DroneCV/depth_model.onnx", g_sess_opts, &g_session);
   if (status) goto fail;
 
   g_onnx_ready = true;
