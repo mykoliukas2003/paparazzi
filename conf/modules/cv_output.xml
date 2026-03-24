@@ -1,0 +1,5 @@
+<module name="cv_output" dir="computer_vision">
+  <file name="cv_output.c"/>
+  <header name="cv_output.h"/>
+  <init fun="cv_output_init()"/>
+</module>
