@@ -298,6 +298,21 @@ static struct image_t *cv_output_func(struct image_t *img, uint8_t camera_id __a
   max_depth_per_block(depth_map, cv_output_nav_vector);
   cv_output_nav_valid = true;
 
+  static int print_counter = 0;
+  print_counter++;
+
+  if (print_counter >= 10) {
+    print_counter = 0;
+    printf("cv_output nav_vector: [");
+    for (int i = 0; i < NUM_BLOCKS; i++) {
+      printf("%f", cv_output_nav_vector[i]);
+      if (i < NUM_BLOCKS - 1) {
+        printf(", ");
+      }
+    }
+    printf("]\n");
+    fflush(stdout);
+  }
   return NULL;
 }
 
