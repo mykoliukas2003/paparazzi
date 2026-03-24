@@ -147,7 +147,11 @@ static bool cv_output_onnx_init_once(void)
     status = ort->CreateSessionOptions(&g_session_options);
     if (status) goto fail;
 
-    status = ort->CreateSession(g_env, "depth_model.onnx", g_session_options, &g_session);
+    status = ort->CreateSession(
+    g_env,
+    "/data/ftp/internal_000/depth_model.onnx",
+    g_session_options,
+    &g_session);
     if (status) goto fail;
   }
 
