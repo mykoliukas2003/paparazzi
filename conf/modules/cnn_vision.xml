@@ -1,0 +1,30 @@
+<!DOCTYPE module SYSTEM "module.dtd">
+
+<module name="cnn_vision" dir="computer_vision/cnn_vision">
+  <doc>
+    <description>
+      CNN-based monocular depth estimation.
+      Runs an ONNX model on the front camera and produces a 7-element
+      navigation vector (max depth per horizontal strip).
+    </description>
+  </doc>
+
+  <dep>
+  <depends>video_thread</depends>
+  </dep>
+  
+  <header>
+    <file name="cnn_vision.h"/>
+  </header>
+
+  <init fun="cnn_vision_init()"/>
+
+  <makefile target="ap|nps">
+    <file name="cnn_vision.c"/>
+    <flag name="LDFLAGS" value="lm"/>
+    <flag name="LDFLAGS" value="lonnxruntime"/>
+    <define name="CNN_VISION_CAMERA" value="front_camera" cond="ifndef CNN_VISION_CAMERA"/>
+    <define name="CNN_VISION_FPS" value="0" cond="ifndef CNN_VISION_FPS"/>
+    <define name="CNN_VISION_ASYNC_NICE" value="0" cond="ifndef CNN_VISION_ASYNC_NICE"/>
+  </makefile>
+</module>

@@ -1,0 +1,28 @@
+<!DOCTYPE module SYSTEM "module.dtd">
+
+<module name="cnn_avoid" dir="cnn_avoid">
+  <doc>
+    <description>
+      CNN-depth based obstacle avoidance with trajectory following.
+      Reads the navigation vector from the cnn_vision module and
+      uses a confidence-based state machine to avoid obstacles while
+      following circle, figure-eight, or lawnmower trajectories.
+    </description>
+  </doc>
+
+  <dep>
+  <depends>cnn_vision</depends>
+  </dep>
+
+  <header>
+    <file name="cnn_avoid.h"/>
+  </header>
+
+  <init fun="cnn_avoid_init()"/>
+  <periodic fun="cnn_avoid_periodic()" freq="4"/>
+
+  <makefile target="ap|nps">
+    <file name="cnn_avoid.c"/>
+    <flag name="LDFLAGS" value="lm"/>
+  </makefile>
+</module>
