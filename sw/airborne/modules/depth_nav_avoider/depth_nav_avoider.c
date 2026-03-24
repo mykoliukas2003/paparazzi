@@ -12,6 +12,14 @@
  *  - RETREAT waypoint for backing away from obstacles
  *  - Trajectory following with return-to-path after avoidance
  *  - OUT_OF_BOUNDS minimum cycle counter to prevent thrashing
+ *
+ * DEPTH SCALE NOTE:
+ *  Model output:  raw float in [0, 255]
+ *  Sender packs:  int16 = raw * 100  → wire values [0, 25500]
+ *  Receiver unpacks: float = int16 / 100  → back to [0.0, 255.0]
+ *  => depth_left/straight/right are in [0.0, 255.0] here.
+ *  => Higher value = more free space (further obstacle).
+ *  All thresholds below are expressed on this [0.0, 255.0] scale.
  */
 
 #include "modules/depth_nav_avoider/depth_nav_avoider.h"
@@ -58,12 +66,20 @@ enum trajectory_type_t {
 /*    Tunable Parameters            */
 /* ================================ */
 
-// Depth thresholds (normalized depth scale: approx -32 to +32)
-float safe_distance_threshold    = 5.0f;   // hard stop threshold
-float caution_distance_threshold = 10.0f;  // early warning threshold
+/*
+ * Depth thresholds on the unpacked scale [0.0, 2.55].
+ * Raw model output 0-255 → packed *100 as int16 → unpacked /100 as float.
+ *
+ *  safe_distance_threshold:    below this → hard stop + rotate
+ *  caution_distance_threshold: below this → slow + gentle turn
+ *
+ * Scale is [0, 255]. Increase to react earlier; decrease for more aggressive flying.
+ */
+float safe_distance_threshold    = 130.0f;   // ~20% of range — hard obstacle, stop now
+float caution_distance_threshold = 150.0f;  // ~40% of range — slow down, start turning
 
 // Depth noise filter (0 = no filtering, 1 = never updates)
-// 0.4 means 40% new reading, 60% history — good balance for this sensor
+// 0.4 means 40% new reading, 60% history
 #define DEPTH_FILTER_ALPHA 0.4f
 
 // Max forward displacement per cycle [m]
@@ -78,7 +94,7 @@ float traj_circle_speed   = 0.05f;  // radians per cycle along circle
 float traj_eight_scale    = 1.6f;   // half-width of figure-eight [m]
 float traj_lawn_step      = 0.5f;   // lateral step between lawnmower passes [m]
 
-// How close drone must be to trajectory before "on path" [m]
+// How close drone must be to trajectory waypoint before "on path" [m]
 #define TRAJ_SNAP_DISTANCE 0.5f
 
 /* ================================ */
@@ -89,9 +105,9 @@ enum navigation_state_t navigation_state = SEARCH_FOR_SAFE_HEADING;
 enum trajectory_type_t  active_trajectory = TRAJ_FIGURE_EIGHT;
 
 int16_t obstacle_free_confidence = 0;
-float   heading_increment        = 5.f;
+float   heading_increment        = 15.0f;
 
-// Depth readings from ABI
+// Depth readings from ABI — on [0.0, 2.55] scale, higher = more free space
 float depth_left             = 0.0f;
 float depth_straight         = 0.0f;
 float depth_right            = 0.0f;
@@ -100,7 +116,7 @@ static float depth_straight_filtered = 0.0f;
 // Trajectory state
 static float traj_angle      = 0.0f;   // current angle along circle/eight [rad]
 static int   lawn_direction  = 1;      // +1 or -1 for lawnmower sweep direction
-static float lawn_y_offset   = 0.0f;  // current lawnmower lateral position [m]
+static float lawn_y_offset   = 0.0f;   // current lawnmower lateral position [m]
 
 // Arena centre (ENU coordinates, set at init from WP_CENTER)
 static float arena_centre_x  = 0.0f;
@@ -120,7 +136,15 @@ static abi_event depth_detection_ev;
 
 /**
  * @brief ABI callback — receives depth estimates packed as scaled integers.
- * cv_estimate_depth packs floats*1000 into pixel_x, pixel_y, pixel_width.
+ *
+ * cv_estimate_depth sends: int16 = raw_float * 100
+ * So we unpack as:         float = int16 / 100.0f
+ *
+ * Result is in [0.0, 2.55] — higher means obstacle is farther away (more free space).
+ *
+ * Mapping:  pixel_x      → depth_left
+ *           pixel_y      → depth_straight
+ *           pixel_width  → depth_right
  */
 static void depth_detection_cb(uint8_t __attribute__((unused)) sender_id,
                                 int16_t pixel_x,
@@ -130,9 +154,12 @@ static void depth_detection_cb(uint8_t __attribute__((unused)) sender_id,
                                 int32_t __attribute__((unused)) quality,
                                 int16_t __attribute__((unused)) extra)
 {
-  depth_left     = ((float)pixel_x)     / 100.0f;
-  depth_straight = ((float)pixel_y)     / 100.0f;
-  depth_right    = ((float)pixel_width) / 100.0f;
+  depth_left     = (float)pixel_x     / 100.0f;
+  depth_straight = (float)pixel_y     / 100.0f;
+  depth_right    = (float)pixel_width / 100.0f;
+
+  VERBOSE_PRINT("ABI recv → L:%.2f S:%.2f R:%.2f\n",
+                depth_left, depth_straight, depth_right);
 }
 
 /* ================================ */
@@ -147,7 +174,6 @@ static void increase_nav_heading(float incrementDegrees);
 static void set_nav_heading_towards(float tx, float ty);
 static void chooseDirectionalIncrement(void);
 static void updateTrajectoryWaypoint(void);
-static float distanceToTrajectory(float px, float py);
 
 /* ================================ */
 /*    Init                          */
@@ -166,7 +192,7 @@ void depth_nav_avoider_init(void)
   arena_centre_y = WaypointY(WP_CENTER);
 
   // Start trajectory angle pointing forward (north)
-  traj_angle = 0.0f;
+  traj_angle    = 0.0f;
   lawn_y_offset = -traj_eight_scale; // start lawnmower at one edge
 
   AbiBindMsgVISUAL_DETECTION(ORANGE_AVOIDER_VISUAL_DETECTION_ID,
@@ -191,19 +217,23 @@ void depth_nav_avoider_periodic(void)
   }
 
   // ---- Low-pass filter on depth_straight to reduce noise ----
+  // Higher alpha = more responsive; lower = smoother but slower to react
   depth_straight_filtered = DEPTH_FILTER_ALPHA * depth_straight
                           + (1.0f - DEPTH_FILTER_ALPHA) * depth_straight_filtered;
 
-  VERBOSE_PRINT("Depths L:%.3f S:%.3f(f:%.3f) R:%.3f | Conf:%d | State:%d | Traj:%d\n",
+  VERBOSE_PRINT("Depths L:%.2f S:%.2f(f:%.2f) R:%.2f | Conf:%d | State:%d | Traj:%d\n",
                 depth_left, depth_straight, depth_straight_filtered, depth_right,
                 obstacle_free_confidence, navigation_state, active_trajectory);
 
   float moveDist = maxDistance;
 
-  // ---- Update confidence based on filtered depth ----
+  // ---- Update confidence based on filtered forward depth ----
+  // depth_straight_filtered is in [0.0, 2.55]: higher = more free space
   if (depth_straight_filtered >= caution_distance_threshold) {
+    // Path looks clear → gain confidence
     obstacle_free_confidence++;
   } else {
+    // Something ahead → lose confidence faster than we gain it
     obstacle_free_confidence -= 2;
   }
   Bound(obstacle_free_confidence, 0, max_trajectory_confidence);
@@ -220,14 +250,15 @@ void depth_nav_avoider_periodic(void)
                               WaypointY(WP_TRAJECTORY))) {
         navigation_state = OUT_OF_BOUNDS;
         trajectory_active = false;
+        VERBOSE_PRINT("Out of bounds!\n");
         break;
       }
 
-      // Check for obstacle
+      // Check for approaching obstacle
       if (depth_straight_filtered < caution_distance_threshold) {
         navigation_state = CAUTION;
         trajectory_active = false;
-        VERBOSE_PRINT("Entering CAUTION, filtered depth: %.3f\n",
+        VERBOSE_PRINT("Entering CAUTION, filtered depth: %.2f\n",
                       depth_straight_filtered);
         break;
       }
@@ -240,48 +271,60 @@ void depth_nav_avoider_periodic(void)
     }
 
     case CAUTION: {
-      // Slow down, apply small corrective turn
-      increase_nav_heading(heading_increment * 5.0f);
-      moveWaypointForward(WP_TRAJECTORY, 0.35f * moveDist / 2.0f);
-      moveWaypointForward(WP_GOAL,       moveDist / 2.0f);
-      moveWaypointForward(WP_RETREAT,   -moveDist / 2.0f);
+      // Slow down and apply a gentle corrective turn toward the clearer side
+      chooseDirectionalIncrement();
+      increase_nav_heading(heading_increment * 0.5f);   // gentle — half the normal step
+      moveWaypointForward(WP_TRAJECTORY, 0.35f * moveDist * 0.5f);
+      moveWaypointForward(WP_GOAL,       moveDist * 0.5f);
+      moveWaypointForward(WP_RETREAT,   -moveDist * 0.5f);
 
-      // Obstacle confirmed → OBSTACLE_FOUND
+      // Obstacle too close → escalate to OBSTACLE_FOUND
       if (depth_straight_filtered < safe_distance_threshold) {
-        if (fabsf(depth_left) > fabsf(depth_right)) {
-          heading_increment = -15.0f;
-          VERBOSE_PRINT("More space LEFT, turning CCW\n");
+        // Pick the side with more free space (higher depth = more space)
+        if (depth_left > depth_right) {
+          heading_increment = -15.0f;  // CCW → turn left
+          VERBOSE_PRINT("More space LEFT (L:%.2f > R:%.2f), turning CCW\n",
+                        depth_left, depth_right);
         } else {
-          heading_increment = 15.0f;
-          VERBOSE_PRINT("More space RIGHT, turning CW\n");
+          heading_increment =  15.0f;  // CW → turn right
+          VERBOSE_PRINT("More space RIGHT (R:%.2f >= L:%.2f), turning CW\n",
+                        depth_right, depth_left);
         }
         obstacle_free_confidence = 0;
         navigation_state = OBSTACLE_FOUND;
+        VERBOSE_PRINT("Escalating to OBSTACLE_FOUND, depth: %.2f\n",
+                      depth_straight_filtered);
+        break;
       }
-      // Path cleared → back to SAFE
-      else if (depth_straight_filtered >= caution_distance_threshold &&
-               obstacle_free_confidence >= 2) {
+
+      // Path has cleared → back to SAFE
+      if (depth_straight_filtered >= caution_distance_threshold &&
+          obstacle_free_confidence >= 2) {
         navigation_state = SAFE;
+        VERBOSE_PRINT("CAUTION resolved, returning to SAFE\n");
       }
       break;
     }
 
     case OBSTACLE_FOUND: {
-      // Freeze forward motion
+      // Freeze forward motion — hold position
       waypoint_move_here_2d(WP_GOAL);
       waypoint_move_here_2d(WP_TRAJECTORY);
 
-      // Back up
-      moveWaypointForward(WP_RETREAT, -moveDist / 4.0f);
+      // Back away from the obstacle
+      moveWaypointForward(WP_RETREAT, -moveDist * 0.25f);
 
-      // Rotate, re-evaluating direction each cycle with absolute depth comparison
-      increase_nav_heading(heading_increment);
-      if (fabsf(depth_left) > fabsf(depth_right)) {
-        heading_increment = -15.0f;
+      // Rotate toward the clearer side, re-evaluated every cycle
+      /*
+      if (depth_left > depth_right) {
+        heading_increment = -5.0f;  // CCW → turn left
       } else {
-        heading_increment =  15.0f;
+        heading_increment =  5.0f;  // CW → turn right
       }
+      */
+      increase_nav_heading(-heading_increment);
 
+      // Once the path ahead is safe enough, begin searching for a clear heading
       if (depth_straight_filtered >= safe_distance_threshold &&
           obstacle_free_confidence >= 1) {
         navigation_state = SEARCH_FOR_SAFE_HEADING;
@@ -291,19 +334,38 @@ void depth_nav_avoider_periodic(void)
     }
 
     case SEARCH_FOR_SAFE_HEADING: {
+      // Keep turning toward the clearer side while re-evaluating each cycle
       increase_nav_heading(heading_increment);
 
+      // Only resume normal flight once we have good confidence the path is clear
       if (depth_straight_filtered >= caution_distance_threshold &&
           obstacle_free_confidence >= 2) {
-        VERBOSE_PRINT("Safe heading found, resuming SAFE\n");
+        VERBOSE_PRINT("Safe heading found (depth:%.2f conf:%d), resuming SAFE\n",
+                      depth_straight_filtered, obstacle_free_confidence);
         navigation_state = SAFE;
 
         // Snap trajectory angle to nearest point so we rejoin smoothly
         float cur_x = stateGetPositionEnu_f()->x;
         float cur_y = stateGetPositionEnu_f()->y;
         if (active_trajectory == TRAJ_CIRCLE || active_trajectory == TRAJ_FIGURE_EIGHT) {
-          // Reset traj_angle to point nearest to current position
+          // 1. Calculate the angle to our current position
           traj_angle = atan2f(cur_y - arena_centre_y, cur_x - arena_centre_x);
+          
+          // 2. THE FIX: Add a "Boost" to skip past the obstacle!
+          // 0.8 radians is roughly 45 degrees. This forces the target waypoint 
+          // to jump forward along the curve, safely past whatever we just dodged.
+          traj_angle += 0.8f; 
+        } 
+        else if (active_trajectory == TRAJ_LAWNMOWER) {
+          // THE FIX FOR LAWNMOWER: 
+          // If an obstacle blocks our current sweep, trying to push through it is dangerous.
+          // Instead, we abandon this row and immediately step laterally to the next pass.
+          lawn_direction *= -1;
+          lawn_y_offset  += traj_lawn_step * lawn_direction;
+          
+          // Clamp to arena bounds just like in the normal update function
+          if (lawn_y_offset > traj_eight_scale)  lawn_y_offset =  traj_eight_scale;
+          if (lawn_y_offset < -traj_eight_scale) lawn_y_offset = -traj_eight_scale;
         }
       }
       break;
@@ -314,10 +376,11 @@ void depth_nav_avoider_periodic(void)
       static uint8_t oob_cycles = 0;
       oob_cycles++;
 
-      increase_nav_heading(15.0f * heading_increment / fabsf(heading_increment));
+      // Turn back toward centre (always CW for simplicity, can be made directional)
+      increase_nav_heading(15.0f * (heading_increment >= 0 ? 1.0f : -1.0f));
       moveWaypointForward(WP_TRAJECTORY, 0.35f * moveDist);
-      moveWaypointForward(WP_GOAL,       moveDist / 2.0f);
-      moveWaypointForward(WP_RETREAT,   -moveDist / 2.0f);
+      moveWaypointForward(WP_GOAL,       moveDist * 0.5f);
+      moveWaypointForward(WP_RETREAT,   -moveDist * 0.5f);
 
       if (oob_cycles >= 3 &&
           InsideObstacleZone(WaypointX(WP_TRAJECTORY),
@@ -350,7 +413,6 @@ static void updateTrajectoryWaypoint(void)
   switch (active_trajectory) {
 
     case TRAJ_CIRCLE: {
-      // Advance angle along circle
       traj_angle += traj_circle_speed;
       FLOAT_ANGLE_NORMALIZE(traj_angle);
 
@@ -364,8 +426,6 @@ static void updateTrajectoryWaypoint(void)
 
     case TRAJ_FIGURE_EIGHT: {
       // Lemniscate of Bernoulli parametric form, scaled to arena
-      // x = scale * cos(t) / (1 + sin²(t))
-      // y = scale * sin(t)*cos(t) / (1 + sin²(t))
       traj_angle += traj_circle_speed;
       FLOAT_ANGLE_NORMALIZE(traj_angle);
 
@@ -379,15 +439,12 @@ static void updateTrajectoryWaypoint(void)
     }
 
     case TRAJ_LAWNMOWER: {
-      // Sweep diagonally across arena, step laterally at each end
       float cur_x = stateGetPositionEnu_f()->x;
       float cur_y = stateGetPositionEnu_f()->y;
 
-      // Target is always the far end of the current sweep pass
       float sweep_end_x = arena_centre_x + lawn_direction * traj_eight_scale;
       float sweep_end_y = arena_centre_y + lawn_y_offset;
 
-      // Check if we are near the end of the current pass
       float dx = sweep_end_x - cur_x;
       float dy = sweep_end_y - cur_y;
       float dist_to_end = sqrtf(dx*dx + dy*dy);
@@ -395,10 +452,10 @@ static void updateTrajectoryWaypoint(void)
       if (dist_to_end < TRAJ_SNAP_DISTANCE) {
         // Reached end of pass — reverse direction and step laterally
         lawn_direction *= -1;
-        lawn_y_offset  += traj_lawn_step * lawn_direction;
+        lawn_y_offset  += traj_lawn_step * (float)lawn_direction;
 
         // Clamp to arena bounds
-        if (lawn_y_offset > traj_eight_scale)  lawn_y_offset =  traj_eight_scale;
+        if (lawn_y_offset >  traj_eight_scale) lawn_y_offset =  traj_eight_scale;
         if (lawn_y_offset < -traj_eight_scale) lawn_y_offset = -traj_eight_scale;
 
         VERBOSE_PRINT("LAWNMOWER: reversing, new y_offset: %.2f\n", lawn_y_offset);
@@ -412,31 +469,12 @@ static void updateTrajectoryWaypoint(void)
     }
 
     default:
-      // Fallback: just move forward
       moveWaypointForward(WP_GOAL, maxDistance);
       return;
   }
 
-  // Move WP_GOAL to trajectory target and steer heading toward it
   moveWaypointXY(WP_GOAL, target_x, target_y);
   set_nav_heading_towards(target_x, target_y);
-}
-
-/**
- * @brief Returns approximate distance from point (px,py) to the current trajectory.
- *        Used to snap traj_angle after avoidance.
- */
-static float distanceToTrajectory(float px, float py)
-{
-  float dx = px - arena_centre_x;
-  float dy = py - arena_centre_y;
-  float dist = sqrtf(dx*dx + dy*dy);
-
-  if (active_trajectory == TRAJ_CIRCLE) {
-    return fabsf(dist - traj_circle_radius);
-  }
-  // For figure-eight and lawnmower, approximate as distance to centre
-  return dist;
 }
 
 /* ================================ */
@@ -484,7 +522,8 @@ static void moveWaypointXY(uint8_t waypoint, float x, float y)
 }
 
 /**
- * @brief Adjusts navigation heading by a given increment.
+ * @brief Adjusts navigation heading by a given increment in degrees.
+ *        Positive = CW (right), Negative = CCW (left) in NED heading convention.
  */
 static void increase_nav_heading(float incrementDegrees)
 {
@@ -506,20 +545,28 @@ static void set_nav_heading_towards(float tx, float ty)
 }
 
 /**
- * @brief Uses depth readings to choose the better turn direction.
- *        Uses absolute values to handle the -32 to +32 depth scale.
- *        Falls back to random if depths are equal or unavailable.
+ * @brief Uses current depth readings to pick the turn direction with more space.
+ *
+ * Depth values are in [0.0, 2.55] — directly comparable, no fabsf needed.
+ * Higher depth → more free space on that side.
+ * Positive heading_increment = CW (right), negative = CCW (left).
  */
 static void chooseDirectionalIncrement(void)
 {
-  if (fabsf(depth_left) > fabsf(depth_right)) {
-    heading_increment = -5.0f; // CCW (left has more open space)
-  } else if (fabsf(depth_right) > fabsf(depth_left)) {
-    heading_increment =  5.0f; // CW (right has more open space)
+  if (depth_left > depth_right) {
+    heading_increment = -5.0f;   // CCW — more free space to the left
+    VERBOSE_PRINT("chooseDir: LEFT clearer (L:%.2f > R:%.2f), increment = -5\n",
+                  depth_left, depth_right);
+  } else if (depth_right > depth_left) {
+    heading_increment =  5.0f;   // CW  — more free space to the right
+    VERBOSE_PRINT("chooseDir: RIGHT clearer (R:%.2f > L:%.2f), increment = +5\n",
+                  depth_right, depth_left);
   } else {
+    // Exactly equal or both zero — pick randomly to break symmetry
     heading_increment = (rand() % 2 == 0) ? 5.0f : -5.0f;
+    VERBOSE_PRINT("chooseDir: equal depths, random increment: %.1f\n",
+                  heading_increment);
   }
-  VERBOSE_PRINT("Chosen heading increment: %.1f\n", heading_increment);
 }
 
 /* ================================ */
@@ -539,8 +586,8 @@ void depth_nav_set_trajectory(uint8_t traj_id)
     default: active_trajectory = TRAJ_FIGURE_EIGHT; break;
   }
   // Reset trajectory progress when switching
-  traj_angle    = 0.0f;
-  lawn_y_offset = -traj_eight_scale;
+  traj_angle     = 0.0f;
+  lawn_y_offset  = -traj_eight_scale;
   lawn_direction = 1;
   VERBOSE_PRINT("Trajectory set to: %d\n", active_trajectory);
 }
