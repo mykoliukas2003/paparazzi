@@ -132,24 +132,7 @@
     <!-- ===== Trajectory selection blocks ===== -->
     <!-- Press the corresponding key or button to select and start a trajectory -->
 
-    <block key="1" name="START circle" strip_button="Circle" strip_icon="circle.png">
-      <call_once fun="depth_nav_set_trajectory(0)"/>
-      <call_once fun="NavSetWaypointHere(WP_GOAL)"/>
-      <call_once fun="NavSetWaypointHere(WP_TRAJECTORY)"/>
-      <call_once fun="NavSetWaypointHere(WP_RETREAT)"/>
-      <stay wp="GOAL"/>
-    </block>
-
-    <block key="2" name="START figure eight" strip_button="Figure-8" strip_icon="eight.png">
-      <call_once fun="depth_nav_set_trajectory(1)"/>
-      <call_once fun="NavSetWaypointHere(WP_GOAL)"/>
-      <call_once fun="NavSetWaypointHere(WP_TRAJECTORY)"/>
-      <call_once fun="NavSetWaypointHere(WP_RETREAT)"/>
-      <stay wp="GOAL"/>
-    </block>
-
-    <block key="3" name="START lawnmower" strip_button="Lawnmower" strip_icon="survey.png">
-      <call_once fun="depth_nav_set_trajectory(2)"/>
+    <block key="1" name="START random walk" strip_button="Random Walk" strip_icon="circle.png">
       <call_once fun="NavSetWaypointHere(WP_GOAL)"/>
       <call_once fun="NavSetWaypointHere(WP_TRAJECTORY)"/>
       <call_once fun="NavSetWaypointHere(WP_RETREAT)"/>

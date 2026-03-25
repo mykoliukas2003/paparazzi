@@ -38,6 +38,9 @@ extern float traj_circle_radius;
 /** Figure-eight / lawnmower scale [m] */
 extern float traj_eight_scale;
 
+extern float TURN_BASE_DEG;
+extern float RANDOM_EXTRA_DEG;
+
 /* ================================ */
 /*    State Visibility (read-only)  */
 /* ================================ */

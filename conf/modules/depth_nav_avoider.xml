@@ -14,9 +14,10 @@
   <settings>
     <dl_settings>
       <dl_settings name="depth_nav_avoider">
-        <dl_setting var="safe_distance_threshold"    min="1" step="0.5"  max="255"/>
         <dl_setting var="caution_distance_threshold" min="1" step="0.5"  max="255"/>
         <dl_setting var="maxDistance"                min="0.1"  step="0.05" max="3.0"/>
+        <dl_setting var="TURN_BASE_DEG"                min="0" step="1" max="90"/>
+        <dl_setting var="RANDOM_EXTRA_DEG"            min="0" step="1" max="90"/>
       </dl_settings>
     </dl_settings>
   </settings>
