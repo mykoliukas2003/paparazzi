@@ -9,16 +9,6 @@
     </description>
   </doc>
 
-
-  <settings>
-  <dl_settings>
-    <dl_settings name="CNN Vision">
-      <dl_setting var="cnn_vision_draw" min="0" step="1" max="1" values="Off|On" shortname="draw"/>
-    </dl_settings>
-  </dl_settings>
-  </settings>
-
-
   <dep>
   <depends>video_thread</depends>
   </dep>
@@ -27,8 +17,6 @@
     <file name="cnn_vision.h"/>
   </header>
 
-
-
   <init fun="cnn_vision_init()"/>
 
   <makefile target="ap|nps">
@@ -36,7 +24,7 @@
     <flag name="LDFLAGS" value="lm"/>
     <flag name="LDFLAGS" value="lonnxruntime"/>
     <define name="CNN_VISION_CAMERA" value="front_camera" cond="ifndef CNN_VISION_CAMERA"/>
-    <define name="CNN_VISION_FPS" value="5" cond="ifndef CNN_VISION_FPS"/>
+    <define name="CNN_VISION_FPS" value="2" cond="ifndef CNN_VISION_FPS"/>
     <define name="CNN_VISION_ASYNC_NICE" value="0" cond="ifndef CNN_VISION_ASYNC_NICE"/>
   </makefile>
 </module>

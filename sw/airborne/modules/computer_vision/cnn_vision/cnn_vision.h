@@ -6,21 +6,18 @@
 
 /**
  * Number of horizontal blocks the depth map is divided into.
- * The CNN output (MODEL_HEIGHT x MODEL_WIDTH) is split into this many
- * vertical strips; each strip's maximum depth value becomes one element
- * of cnn_vision_nav_vector[].
+ * Split along MODEL_HEIGHT (which maps to the real-world horizontal FOV).
+ * Each block's average depth becomes one element of cnn_vision_nav_vector[].
  *
  * Higher value = more free space (obstacle further away).
  */
 #define CNN_VISION_NUM_BLOCKS 7
 
-/** Per-block maximum depth.  Updated every frame by the vision thread. */
+/** Per-block average depth. Updated by the vision thread. */
 extern float cnn_vision_nav_vector[CNN_VISION_NUM_BLOCKS];
 
 /** Set to true once the first valid inference has completed. */
 extern bool cnn_vision_nav_valid;
-
-extern uint8_t cnn_vision_draw;
 
 extern void cnn_vision_init(void);
 extern void cnn_vision_close(void);

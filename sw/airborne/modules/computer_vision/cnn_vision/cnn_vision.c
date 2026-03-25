@@ -2,18 +2,25 @@
  * @file "modules/computer_vision/cnn_vision/cnn_vision.c"
  *
  * Runs a monocular depth-estimation CNN (ONNX) on the front camera and
- * produces a 7-element navigation vector (one max-depth value per
+ * produces a 7-element navigation vector (one avg-depth value per
  * horizontal strip).  The navigation module (cnn_avoid) reads this
  * vector directly — no ABI message is used between the two.
  *
  * Pipeline per frame:
- *   1. Crop a vertical strip from the YUV422 image
- *   2. Resize to MODEL_HEIGHT x MODEL_WIDTH
- *   3. Normalise to [0,1] float NCHW tensor
- *   4. Run ONNX inference  →  depth map [MODEL_HEIGHT x MODEL_WIDTH]
- *   5. Split depth map into NUM_BLOCKS vertical strips, take max per strip
- *   6. Store in cnn_vision_nav_vector[]
- *   7. (Optional) Draw depth overlay on the camera feed
+ *   1. Crop a vertical strip from the YUV422 image (inlined, no function calls)
+ *   2. Resize + normalise to [0,1] float NCHW tensor in a single pass
+ *   3. Run ONNX inference  ->  depth map [MODEL_HEIGHT x MODEL_WIDTH]
+ *   4. Split depth map into NUM_BLOCKS along HEIGHT axis, take average per block
+ *   5. Store in cnn_vision_nav_vector[]
+ *
+ * Optimisations:
+ *   - Async mode: CNN runs in background thread, camera stays at full FPS
+ *   - Static buffers: no per-frame stack allocation (~790KB saved)
+ *   - Inlined pixel access in crop loop (no function call per pixel)
+ *   - Single resize+normalise pass (eliminates intermediate uint8 buffer)
+ *   - HEIGHT-axis block split (matches real-world horizontal FOV)
+ *   - memcpy for output tensor copy
+ *   - Single-threaded ONNX to avoid thread contention
  */
 
 #include <stdio.h>
@@ -44,13 +51,6 @@
 #define CROP_W  80
 #define CROP_H  520
 
-#ifndef CNN_VISION_FPS
-#define CNN_VISION_FPS 5
-#endif
-
-#ifndef CNN_VISION_ASYNC_NICE
-#define CNN_VISION_ASYNC_NICE 0
-#endif
 
 /* ===================== */
 /*    Crop buffer type   */
@@ -70,6 +70,14 @@ static OrtSessionOptions *g_sess_opts = NULL;
 static OrtSession *g_session          = NULL;
 static bool g_onnx_ready              = false;
 
+/* ========================== */
+/*    Static work buffers     */
+/* ========================== */
+
+static CropBuffer s_crop;
+static float s_cnn_input[1][CHANNELS][MODEL_HEIGHT][MODEL_WIDTH];
+static float s_depth_map[MODEL_HEIGHT][MODEL_WIDTH];
+
 /* ===================== */
 /*    Public output      */
 /* ===================== */
@@ -77,90 +85,60 @@ static bool g_onnx_ready              = false;
 float cnn_vision_nav_vector[CNN_VISION_NUM_BLOCKS];
 bool  cnn_vision_nav_valid = false;
 
-/* Draw depth overlay on camera feed — togglable from GCS */
-uint8_t cnn_vision_draw = 1;
-
-/* ============================================= */
-/*    YUV422 pixel reader (UYVY byte order)      */
-/* ============================================= */
-
-static inline void read_yuv422_uyvy_pixel(const struct image_t *img,
-                                          int x, int y,
-                                          uint8_t *Y, uint8_t *U, uint8_t *V)
-{
-  const uint8_t *buf = (const uint8_t *)img->buf;
-  int x_even = x & ~1;
-  int idx    = 2 * (y * img->w + x_even);
-
-  *U = buf[idx + 0];
-  *V = buf[idx + 2];
-  *Y = (x % 2 == 0) ? buf[idx + 1] : buf[idx + 3];
-}
-
-static inline void pack_yuv_channels(uint8_t y, uint8_t u, uint8_t v,
-                                     uint8_t out[3])
-{
-  out[0] = y;
-  out[1] = u;
-  out[2] = v;
-}
-
 /* ============================================= */
 /*    Image pre-processing                       */
 /* ============================================= */
 
+/**
+ * @brief Crops a vertical strip from a YUV422 UYVY image.
+ *        Inlined pixel access -- no per-pixel function calls.
+ */
 static bool crop_vertical_strip_yuv422(const struct image_t *img,
                                        CropBuffer *crop)
 {
-  if (!img || !crop || !img->buf) {
-    fprintf(stderr, "cnn_vision: null image input\n");
-    return false;
-  }
-  if (img->type != IMAGE_YUV422) {
-    fprintf(stderr, "cnn_vision: expected IMAGE_YUV422, got type=%d\n", img->type);
-    return false;
-  }
-  if (img->w < CROP_X + CROP_W || img->h < CROP_Y + CROP_H) {
-    fprintf(stderr, "cnn_vision: frame too small (%ux%u), need (%d,%d)\n",
-            img->w, img->h, CROP_X + CROP_W, CROP_Y + CROP_H);
-    return false;
-  }
+  if (!img || !crop || !img->buf) return false;
+  if (img->type != IMAGE_YUV422) return false;
+  if (img->w < CROP_X + CROP_W || img->h < CROP_Y + CROP_H) return false;
+
+  const uint8_t *buf = (const uint8_t *)img->buf;
+  const int w = (int)img->w;
 
   for (int y = 0; y < CROP_H; y++) {
+    const int src_y = CROP_Y + y;
     for (int x = 0; x < CROP_W; x++) {
-      uint8_t Y, U, V;
-      read_yuv422_uyvy_pixel(img, CROP_X + x, CROP_Y + y, &Y, &U, &V);
-      pack_yuv_channels(Y, U, V, crop->data[y][x]);
+      const int src_x = CROP_X + x;
+      const int x_even = src_x & ~1;
+      const int idx = 2 * (src_y * w + x_even);
+
+      crop->data[y][x][0] = (src_x & 1) ? buf[idx + 3] : buf[idx + 1]; /* Y */
+      crop->data[y][x][1] = buf[idx + 0];                                /* U */
+      crop->data[y][x][2] = buf[idx + 2];                                /* V */
     }
   }
   return true;
 }
 
-static void resize_crop_to_model(const CropBuffer *crop,
-                                 uint8_t resized[MODEL_HEIGHT][MODEL_WIDTH][CHANNELS])
+/**
+ * @brief Combined resize + normalise in a single pass.
+ *        Nearest-neighbour resize from CropBuffer [CROP_H x CROP_W]
+ *        directly into float NCHW tensor [1 x 3 x MODEL_HEIGHT x MODEL_WIDTH].
+ *        Eliminates the intermediate uint8 resized buffer entirely.
+ */
+static void resize_and_normalize(const CropBuffer *crop,
+                                 float input[1][CHANNELS][MODEL_HEIGHT][MODEL_WIDTH])
 {
   for (int out_y = 0; out_y < MODEL_HEIGHT; out_y++) {
+    int src_y = (out_y * CROP_H) / MODEL_HEIGHT;
+    if (src_y >= CROP_H) src_y = CROP_H - 1;
+
     for (int out_x = 0; out_x < MODEL_WIDTH; out_x++) {
-      int src_y = (out_y * CROP_H) / MODEL_HEIGHT;
       int src_x = (out_x * CROP_W) / MODEL_WIDTH;
-      if (src_y >= CROP_H) src_y = CROP_H - 1;
       if (src_x >= CROP_W) src_x = CROP_W - 1;
 
-      for (int c = 0; c < CHANNELS; c++) {
-        resized[out_y][out_x][c] = crop->data[src_y][src_x][c];
-      }
-    }
-  }
-}
-
-static void normalize_to_nchw(uint8_t resized[MODEL_HEIGHT][MODEL_WIDTH][CHANNELS],
-                               float input[1][CHANNELS][MODEL_HEIGHT][MODEL_WIDTH])
-{
-  for (int c = 0; c < CHANNELS; c++) {
-    for (int y = 0; y < MODEL_HEIGHT; y++) {
-      for (int x = 0; x < MODEL_WIDTH; x++) {
-        input[0][c][y][x] = resized[y][x][c] / 255.0f;
-      }
+      const uint8_t *pixel = crop->data[src_y][src_x];
+      input[0][0][out_y][out_x] = pixel[0] * (1.0f / 255.0f);
+      input[0][1][out_y][out_x] = pixel[1] * (1.0f / 255.0f);
+      input[0][2][out_y][out_x] = pixel[2] * (1.0f / 255.0f);
     }
   }
 }
@@ -187,10 +165,16 @@ static bool cnn_vision_onnx_init_once(void)
   status = ort->CreateSessionOptions(&g_sess_opts);
   if (status) goto fail;
 
-  status = ort->CreateSession(g_env, "/home/bonkata/paparazzi/CVCNN/DroneCV/depth_model.onnx", g_sess_opts, &g_session);
+  /* Single thread — avoids contention with paparazzi threads */
+  status = ort->SetIntraOpNumThreads(g_sess_opts, 1);
+  if (status) goto fail;
+
+  status = ort->CreateSession(g_env, "/home/bonkata/paparazzi/CVCNN/DroneCV/depth_model.onnx",
+                              g_sess_opts, &g_session);
   if (status) goto fail;
 
   g_onnx_ready = true;
+  fprintf(stderr, "cnn_vision: ONNX model loaded OK\n");
   return true;
 
 fail:
@@ -250,16 +234,12 @@ static bool run_cnn_onnx(float input[1][CHANNELS][MODEL_HEIGHT][MODEL_WIDTH],
     status = ort->GetTensorMutableData(output_tensor, (void **)&out_data);
     if (status) goto fail;
 
-    /* Output shape assumed [1, 1, MODEL_HEIGHT, MODEL_WIDTH] */
-    for (int y = 0; y < MODEL_HEIGHT; y++) {
-      for (int x = 0; x < MODEL_WIDTH; x++) {
-        output[y][x] = out_data[y * MODEL_WIDTH + x];
-      }
-    }
+    /* Bulk copy — faster than per-element loop */
+    memcpy(output, out_data, MODEL_HEIGHT * MODEL_WIDTH * sizeof(float));
   }
 
-  if (input_name)    ort->AllocatorFree(allocator, input_name);
-  if (output_name)   ort->AllocatorFree(allocator, output_name);
+  if (input_name)    (void)ort->AllocatorFree(allocator, input_name);
+  if (output_name)   (void)ort->AllocatorFree(allocator, output_name);
   if (output_tensor) ort->ReleaseValue(output_tensor);
   if (input_tensor)  ort->ReleaseValue(input_tensor);
   if (mem_info)      ort->ReleaseMemoryInfo(mem_info);
@@ -268,166 +248,82 @@ static bool run_cnn_onnx(float input[1][CHANNELS][MODEL_HEIGHT][MODEL_WIDTH],
 fail:
   fprintf(stderr, "cnn_vision: ONNX run failed: %s\n", ort->GetErrorMessage(status));
   ort->ReleaseStatus(status);
-  if (input_name  && allocator) ort->AllocatorFree(allocator, input_name);
-  if (output_name && allocator) ort->AllocatorFree(allocator, output_name);
+  if (input_name  && allocator) (void)ort->AllocatorFree(allocator, input_name);
+  if (output_name && allocator) (void)ort->AllocatorFree(allocator, output_name);
   if (output_tensor) ort->ReleaseValue(output_tensor);
   if (input_tensor)  ort->ReleaseValue(input_tensor);
   if (mem_info)      ort->ReleaseMemoryInfo(mem_info);
   return false;
 }
 
+/* ============================================= */
+/*    Post-processing: avg depth per block       */
+/* ============================================= */
+
 /**
  * @brief Average depth per block along the HEIGHT axis.
- *        More robust than MIN (single bad pixel doesn't dominate)
- *        or MAX (hides nearby obstacles).
+ *
+ * MODEL_HEIGHT (80) maps to the 520px real-world horizontal FOV
+ * (camera is sideways, crop is resized).
+ *
+ *   Block 0 = rows 0-10  = one side of drone's horizontal view
+ *   Block 6 = rows 69-79 = other side
  */
 static void avg_depth_per_block(float depth[MODEL_HEIGHT][MODEL_WIDTH],
                                 float block_vals[NUM_BLOCKS])
 {
-  int base_width = MODEL_WIDTH / NUM_BLOCKS;
-  int remainder  = MODEL_WIDTH % NUM_BLOCKS;
-  int start_x    = 0;
+  int base_height = MODEL_HEIGHT / NUM_BLOCKS;
+  int remainder   = MODEL_HEIGHT % NUM_BLOCKS;
+  int start_y     = 0;
 
   for (int b = 0; b < NUM_BLOCKS; b++) {
-    int this_width = base_width + (b < remainder ? 1 : 0);
-    int end_x      = start_x + this_width;
+    int this_height = base_height + (b < remainder ? 1 : 0);
+    int end_y       = start_y + this_height;
 
     float sum = 0.0f;
     int count = 0;
 
-    for (int y = 0; y < MODEL_HEIGHT; y++) {
-      for (int x = start_x; x < end_x; x++) {
+    for (int y = start_y; y < end_y; y++) {
+      for (int x = 0; x < MODEL_WIDTH; x++) {
         sum += depth[y][x];
         count++;
       }
     }
 
     block_vals[b] = (count > 0) ? sum / (float)count : 0.0f;
-    start_x = end_x;
+    start_y = end_y;
   }
 }
 
 /* ============================================= */
-/*    Depth overlay drawing                      */
-/* ============================================= */
-
- /* @brief Draws 7 coloured horizontal strips on the raw image.
- *        After the GStreamer counterclockwise rotation, these appear
- *        as vertical columns on screen — matching the drone's left/right view.
- *
- *        Bar length (growing from the right edge) is proportional to depth.
- *        After rotation, bars grow upward from the bottom of the screen.
- *
- *        Block order is reversed so that after CCW rotation:
- *          screen left  = block 0-1 = drone's LEFT
- *          screen centre = block 2-4 = STRAIGHT ahead
- *          screen right = block 5-6 = drone's RIGHT
- */
-static void draw_depth_overlay(struct image_t *img,
-                               float block_depths[CNN_VISION_NUM_BLOCKS])
-{
-  if (!img || !img->buf) return;
-
-  uint8_t *buf = (uint8_t *)img->buf;
-  int strip_height = (int)img->h / CNN_VISION_NUM_BLOCKS;
-
-  for (int b = 0; b < CNN_VISION_NUM_BLOCKS; b++) {
-    /* Reverse block order: bottom of raw → left of rotated screen */
-    int draw_b = CNN_VISION_NUM_BLOCKS - 1 - b;
-    float d = block_depths[draw_b];
-
-    uint8_t Y_val, U_val, V_val;
-    if (d < 0.48f) {
-      Y_val = 76;  U_val = 84;  V_val = 255;   /* Red — obstacle */
-    } else if (d < 0.57f) {
-      Y_val = 226; U_val = 0;   V_val = 149;   /* Yellow — caution */
-    } else {
-      Y_val = 150; U_val = 43;  V_val = 21;    /* Green — safe */
-    }
-
-    /* Bar width proportional to depth, growing from the right edge */
-    int bar_width = (int)(d * (float)img->w);
-    if (bar_width > (int)img->w) bar_width = (int)img->w;
-    int x_start = (int)img->w - bar_width;
-
-    int y_start = b * strip_height;
-    int y_end   = y_start + strip_height;
-    if (y_end > (int)img->h) y_end = (int)img->h;
-
-    for (int y = y_start; y < y_end; y++) {
-      for (int x = x_start; x < (int)img->w; x++) {
-        int x_even = x & ~1;
-        int idx = 2 * (y * (int)img->w + x_even);
-
-        buf[idx + 0] = (uint8_t)((buf[idx + 0] + U_val) / 2);
-        buf[idx + 2] = (uint8_t)((buf[idx + 2] + V_val) / 2);
-        if (x % 2 == 0) {
-          buf[idx + 1] = (uint8_t)((buf[idx + 1] + Y_val) / 2);
-        } else {
-          buf[idx + 3] = (uint8_t)((buf[idx + 3] + Y_val) / 2);
-        }
-      }
-    }
-
-    /* White separator line between strips */
-    if (b > 0) {
-      for (int x = 0; x < (int)img->w; x++) {
-        int x_even = x & ~1;
-        int idx = 2 * (y_start * (int)img->w + x_even);
-        if (x % 2 == 0) {
-          buf[idx + 1] = 235;
-        } else {
-          buf[idx + 3] = 235;
-        }
-        buf[idx + 0] = 128;
-        buf[idx + 2] = 128;
-      }
-    }
-  }
-}
-
-/* ============================================= */
-/*    CV callback (runs in video thread)         */
+/*    CV callback (runs in async video thread)   */
 /* ============================================= */
 
 static struct image_t *cnn_vision_func(struct image_t *img,
                                        uint8_t camera_id __attribute__((unused)))
 {
-  if (!cnn_vision_onnx_init_once()) return img;
+  if (!cnn_vision_onnx_init_once()) return NULL;
+  if (!crop_vertical_strip_yuv422(img, &s_crop)) return NULL;
 
-  CropBuffer crop;
-  if (!crop_vertical_strip_yuv422(img, &crop)) return img;
+  resize_and_normalize(&s_crop, s_cnn_input);
 
-  uint8_t resized[MODEL_HEIGHT][MODEL_WIDTH][CHANNELS];
-  float   cnn_input[1][CHANNELS][MODEL_HEIGHT][MODEL_WIDTH];
-  float   depth_map[MODEL_HEIGHT][MODEL_WIDTH];
+  if (!run_cnn_onnx(s_cnn_input, s_depth_map)) return NULL;
 
-  resize_crop_to_model(&crop, resized);
-  normalize_to_nchw(resized, cnn_input);
-
-  if (!run_cnn_onnx(cnn_input, depth_map)) return img;
-
-  avg_depth_per_block(depth_map, cnn_vision_nav_vector);
+  avg_depth_per_block(s_depth_map, cnn_vision_nav_vector);
   cnn_vision_nav_valid = true;
 
-  /* Draw depth overlay on camera feed if enabled */
-  if (cnn_vision_draw) {
-    draw_depth_overlay(img, cnn_vision_nav_vector);
-  }
-
-  /* Periodic debug print (every 10th frame) */
+  /* Periodic debug print (every 20th frame) */
   static int print_counter = 0;
-  if (++print_counter >= 10) {
+  if (++print_counter >= 20) {
     print_counter = 0;
-    fprintf(stderr, "cnn_vision nav_vector: [");
-    for (int i = 0; i < NUM_BLOCKS; i++) {
-      fprintf(stderr, "%.2f%s", cnn_vision_nav_vector[i],
-              (i < NUM_BLOCKS - 1) ? ", " : "");
-    }
-    fprintf(stderr, "]\n");
+    fprintf(stderr, "cnn_vision: [%.2f, %.2f, %.2f, %.2f, %.2f, %.2f, %.2f]\n",
+            cnn_vision_nav_vector[0], cnn_vision_nav_vector[1],
+            cnn_vision_nav_vector[2], cnn_vision_nav_vector[3],
+            cnn_vision_nav_vector[4], cnn_vision_nav_vector[5],
+            cnn_vision_nav_vector[6]);
   }
 
-  return img;  /* Return img so the video pipeline passes it to the RTP stream */
+  return NULL;
 }
 
 /* ============================================= */
@@ -441,10 +337,11 @@ void cnn_vision_init(void)
     cnn_vision_nav_vector[i] = 0.0f;
   }
 
-    cv_add_to_device(&CNN_VISION_CAMERA,
-                    cnn_vision_func,
-                    CNN_VISION_FPS,
-                    0);
+  cv_add_to_device_async(&CNN_VISION_CAMERA,
+                         cnn_vision_func,
+                         CNN_VISION_ASYNC_NICE,
+                         CNN_VISION_FPS,
+                         0);
 }
 
 void cnn_vision_close(void)
