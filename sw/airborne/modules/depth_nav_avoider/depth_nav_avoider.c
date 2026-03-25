@@ -80,9 +80,9 @@ static float median_of(const float *buf)
  * Tune these if the drone is still too aggressive or too timid.
  */
 float safe_distance_threshold    = 40.0f;
-float caution_distance_threshold = 70.0f;
+float caution_distance_threshold = 55.0f;
 
-float maxDistance = 1.0f;  // waypoint step size [m]
+float maxDistance = 0.5f;  // waypoint step size [m]
 
 /*
  * After avoiding, fly straight for at least this many cycles
@@ -96,8 +96,8 @@ float maxDistance = 1.0f;  // waypoint step size [m]
  * Each avoidance adds a random extra offset on top of turning toward
  * the clearer side, so the drone doesn't get stuck in loops.
  */
-float TURN_BASE_DEG   = 10.0f;   // base rotation per cycle when avoiding
-float RANDOM_EXTRA_DEG = 15.0f;  // random extra heading offset after clearing
+float TURN_BASE_DEG   = 8.0f;   // base rotation per cycle when avoiding
+float RANDOM_EXTRA_DEG = 12.0f;  // random extra heading offset after clearing
 
 /* ================================ */
 /*    State Variables               */
