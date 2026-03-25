@@ -36,7 +36,7 @@
     <flag name="LDFLAGS" value="lm"/>
     <flag name="LDFLAGS" value="lonnxruntime"/>
     <define name="CNN_VISION_CAMERA" value="front_camera" cond="ifndef CNN_VISION_CAMERA"/>
-    <define name="CNN_VISION_FPS" value="0" cond="ifndef CNN_VISION_FPS"/>
+    <define name="CNN_VISION_FPS" value="5" cond="ifndef CNN_VISION_FPS"/>
     <define name="CNN_VISION_ASYNC_NICE" value="0" cond="ifndef CNN_VISION_ASYNC_NICE"/>
   </makefile>
 </module>

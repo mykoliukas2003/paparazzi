@@ -45,7 +45,7 @@
 #define CROP_H  520
 
 #ifndef CNN_VISION_FPS
-#define CNN_VISION_FPS 0
+#define CNN_VISION_FPS 5
 #endif
 
 #ifndef CNN_VISION_ASYNC_NICE
@@ -284,26 +284,26 @@ fail:
 static void avg_depth_per_block(float depth[MODEL_HEIGHT][MODEL_WIDTH],
                                 float block_vals[NUM_BLOCKS])
 {
-  int base_height = MODEL_HEIGHT / NUM_BLOCKS;
-  int remainder   = MODEL_HEIGHT % NUM_BLOCKS;
-  int start_y     = 0;
+  int base_width = MODEL_WIDTH / NUM_BLOCKS;
+  int remainder  = MODEL_WIDTH % NUM_BLOCKS;
+  int start_x    = 0;
 
   for (int b = 0; b < NUM_BLOCKS; b++) {
-    int this_height = base_height + (b < remainder ? 1 : 0);
-    int end_y       = start_y + this_height;
+    int this_width = base_width + (b < remainder ? 1 : 0);
+    int end_x      = start_x + this_width;
 
     float sum = 0.0f;
     int count = 0;
 
-    for (int y = start_y; y < end_y; y++) {
-      for (int x = 0; x < MODEL_WIDTH; x++) {
+    for (int y = 0; y < MODEL_HEIGHT; y++) {
+      for (int x = start_x; x < end_x; x++) {
         sum += depth[y][x];
         count++;
       }
     }
 
     block_vals[b] = (count > 0) ? sum / (float)count : 0.0f;
-    start_y = end_y;
+    start_x = end_x;
   }
 }
 
