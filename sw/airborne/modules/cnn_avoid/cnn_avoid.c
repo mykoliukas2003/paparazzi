@@ -170,18 +170,18 @@ static void update_depths_from_nav_vector(void)
 
   const float *v = cnn_vision_nav_vector;
 
-  /* Left: average of blocks 0-1 */
-  depth_left = (v[0] + v[1]) / 2.0f;
+  /* Left region (used for turn calculation) */
+  depth_left = (v[0] + v[1] + v[2]) / 3.0f;
 
-  /* Straight: average of blocks 2-4 */
+  /* Straight region */
   depth_straight = (v[2] + v[3] + v[4]) / 3.0f;
 
-  /* Right: average of blocks 5-6 */
-  depth_right = (v[5] + v[6]) / 2.0f;
+  /* Right region (used for turn calculation) */
+  depth_right = (v[4] + v[5] + v[6]) / 3.0f;
 }
 
 /* ================================ */
-/*    Main Periodic Function        */
+/* Main Periodic Function        */
 /* ================================ */
 
 void cnn_avoid_periodic(void)
@@ -209,15 +209,19 @@ void cnn_avoid_periodic(void)
   }
   Bound(obstacle_free_confidence, 0, max_trajectory_confidence);
 
-  /* ---- Emergency override: raw depth critical while in SAFE ---- */
-  if (navigation_state == SAFE && depth_straight < cnn_safe_distance_threshold) {
-    VERBOSE_PRINT("EMERGENCY: raw depth %.2f below safe threshold\n", depth_straight);
+  /* ---- Emergency override: Hard stop - obstacle directly ahead ---- */
+  const float *v = cnn_vision_nav_vector;
+  if (navigation_state == SAFE && v[3] < cnn_safe_distance_threshold) {
+    VERBOSE_PRINT("EMERGENCY: raw depth[3] %.2f below safe threshold\n", v[3]);
     obstacle_angle = traj_angle;
+    
+    /* Turn direction — use full outer cells for maximum decision quality */
     if (depth_left > depth_right) {
-      heading_increment = -15.0f;
+      heading_increment = -15.0f;  // turn left
     } else {
-      heading_increment =  15.0f;
+      heading_increment =  15.0f;  // turn right
     }
+    
     obstacle_free_confidence = 0;
     navigation_state = OBSTACLE_FOUND;
     trajectory_active = false;
@@ -237,10 +241,27 @@ void cnn_avoid_periodic(void)
         break;
       }
 
-      if (depth_straight_filtered < cnn_caution_distance_threshold) {
-        chooseDirectionalIncrement();
+      /* Early warning — obstacle entering from far side */
+      bool side_obstacle_detected = false;
+      if (v[0] < cnn_caution_distance_threshold || v[6] < cnn_caution_distance_threshold) {
+          // Something far to the side — note it but don't react yet
+          side_obstacle_detected = true;
+          VERBOSE_PRINT("Side obstacle detected (v[0]:%.2f, v[6]:%.2f)\n", v[0], v[6]);
+      }
+
+      /* Medium warning — obstacle getting closer to flight path */
+      if (v[1] < cnn_caution_distance_threshold || v[5] < cnn_caution_distance_threshold || depth_straight_filtered < cnn_caution_distance_threshold) {
+        
+        /* Set turn direction early based on full spatial awareness */
+        if (depth_left > depth_right) {
+          heading_increment = -15.0f;
+        } else {
+          heading_increment =  15.0f;
+        }
+        
         navigation_state = CAUTION;
         trajectory_active = false;
+        VERBOSE_PRINT("Entering CAUTION State\n");
         break;
       }
 
@@ -257,8 +278,11 @@ void cnn_avoid_periodic(void)
       moveWaypointForward(WP_GOAL,       moveDist * 0.5f);
       moveWaypointForward(WP_RETREAT,   -moveDist * 0.5f);
 
+      /* Escalation: obstacle dead ahead */
       if (depth_straight_filtered < cnn_safe_distance_threshold) {
         obstacle_angle = traj_angle;
+        
+        /* Re-evaluate best turn direction */
         if (depth_left > depth_right) {
           heading_increment = -15.0f;
           VERBOSE_PRINT("More space LEFT (L:%.2f > R:%.2f)\n", depth_left, depth_right);
@@ -266,6 +290,7 @@ void cnn_avoid_periodic(void)
           heading_increment =  15.0f;
           VERBOSE_PRINT("More space RIGHT (R:%.2f >= L:%.2f)\n", depth_right, depth_left);
         }
+        
         obstacle_free_confidence = 0;
         navigation_state = OBSTACLE_FOUND;
         VERBOSE_PRINT("Escalating to OBSTACLE_FOUND\n");
