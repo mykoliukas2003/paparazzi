@@ -60,6 +60,7 @@ enum navigation_state_t {
 };
 
 enum trajectory_type_t {
+  TRAJ_NONE,           // Free roam — fly forward, avoid obstacles
   TRAJ_CIRCLE,
   TRAJ_FIGURE_EIGHT,
   TRAJ_LAWNMOWER
@@ -74,20 +75,20 @@ enum trajectory_type_t {
  * The CNN outputs values in a model-specific range (typically [0, 255]).
  * Higher = more free space.  Tune these to your model's output scale.
  */
-float cnn_safe_distance_threshold    = 0.15f;   // tune after seeing logs
-float cnn_caution_distance_threshold = 0.20f;   // tune after seeing logs
-float cnn_caution_exit_threshold     = 0.25f;   // tune after seeing logs
+float cnn_safe_distance_threshold    = 0.25f;   // tune after seeing logs
+float cnn_caution_distance_threshold = 0.29f;   // tune after seeing logs
+float cnn_caution_exit_threshold     = 0.30f;   // tune after seeing logs
 
 /* Low-pass filter on straight depth (0 = no filter, 1 = frozen) */
-float cnn_depth_filter_alpha = 0.7f;
+float cnn_depth_filter_alpha = 0.9f;
 
-float cnn_max_distance = 1.0f;  // max forward displacement per cycle [m]
+float cnn_max_distance = 0.50f;  // max forward displacement per cycle [m]
 
 const int16_t max_trajectory_confidence = 3;
 
 /* Trajectory parameters */
 float traj_circle_radius = 1.8f;
-float traj_circle_speed  = 0.02f;
+float traj_circle_speed  = 0.05f;
 float traj_eight_scale   = 1.6f;
 float traj_lawn_step     = 0.5f;
 
@@ -98,7 +99,7 @@ float traj_lawn_step     = 0.5f;
 /* ================================ */
 
 enum navigation_state_t navigation_state  = SEARCH_FOR_SAFE_HEADING;
-enum trajectory_type_t  active_trajectory = TRAJ_FIGURE_EIGHT;
+enum trajectory_type_t  active_trajectory = TRAJ_NONE;
 
 int16_t obstacle_free_confidence = 0;
 float   heading_increment        = 15.0f;
@@ -237,10 +238,9 @@ void cnn_avoid_periodic(void)
       }
 
       if (depth_straight_filtered < cnn_caution_distance_threshold) {
+        chooseDirectionalIncrement();
         navigation_state = CAUTION;
         trajectory_active = false;
-        VERBOSE_PRINT("Entering CAUTION, filtered depth: %.2f\n",
-                      depth_straight_filtered);
         break;
       }
 
@@ -251,7 +251,7 @@ void cnn_avoid_periodic(void)
     }
 
     case CAUTION: {
-      chooseDirectionalIncrement();
+      
       increase_nav_heading(heading_increment * 0.5f);
       moveWaypointForward(WP_TRAJECTORY, 0.35f * moveDist * 0.5f);
       moveWaypointForward(WP_GOAL,       moveDist * 0.5f);
@@ -288,7 +288,7 @@ void cnn_avoid_periodic(void)
       increase_nav_heading(heading_increment);
 
       if (depth_straight_filtered >= cnn_safe_distance_threshold &&
-          obstacle_free_confidence >= 1) {
+          obstacle_free_confidence >= 2) {
         navigation_state = SEARCH_FOR_SAFE_HEADING;
         VERBOSE_PRINT("Obstacle cleared, searching for safe heading\n");
       }
@@ -301,7 +301,7 @@ void cnn_avoid_periodic(void)
       increase_nav_heading(heading_increment);
 
       if (depth_straight_filtered >= cnn_caution_distance_threshold &&
-          obstacle_free_confidence >= 2) {
+          obstacle_free_confidence >= 3) {
         VERBOSE_PRINT("Safe heading found, resuming SAFE\n");
         navigation_state = SAFE;
 
@@ -310,7 +310,7 @@ void cnn_avoid_periodic(void)
 
         if (active_trajectory == TRAJ_CIRCLE || active_trajectory == TRAJ_FIGURE_EIGHT) {
           float cur_angle  = atan2f(cur_y - arena_centre_y, cur_x - arena_centre_x);
-          float skip_angle = obstacle_angle + 1.5f;
+          float skip_angle = obstacle_angle + 2.0f;
           FLOAT_ANGLE_NORMALIZE(skip_angle);
 
           float dist_cur  = cur_angle  - obstacle_angle;
@@ -332,6 +332,7 @@ void cnn_avoid_periodic(void)
           if (lawn_y_offset >  traj_eight_scale) lawn_y_offset =  traj_eight_scale;
           if (lawn_y_offset < -traj_eight_scale) lawn_y_offset = -traj_eight_scale;
         }
+        // TRAJ_NONE: nothing to rejoin — just resume flying forward
       }
       break;
     }
@@ -380,7 +381,13 @@ static void updateTrajectoryWaypoint(void)
                     target_x, target_y, traj_angle);
       break;
     }
-
+    case TRAJ_NONE: {
+      // Just fly forward — no trajectory to follow
+      moveWaypointForward(WP_GOAL, cnn_max_distance);
+      moveWaypointForward(WP_TRAJECTORY, 0.35f * cnn_max_distance);
+      VERBOSE_PRINT("FREE ROAM: flying forward\n");
+      return;  // skip the set_nav_heading_towards at the bottom
+    }
     case TRAJ_FIGURE_EIGHT: {
       traj_angle += traj_circle_speed;
       FLOAT_ANGLE_NORMALIZE(traj_angle);
@@ -477,11 +484,13 @@ static void set_nav_heading_towards(float tx, float ty)
  */
 static void chooseDirectionalIncrement(void)
 {
-  if (depth_left > depth_right) {
+  float diff = depth_left - depth_right;
+  if (diff > 0.05f) {
     heading_increment = -5.0f;
-  } else if (depth_right > depth_left) {
-    heading_increment =  5.0f;
-  } else {
+  } else if (diff < -0.05f) {
+    heading_increment = 5.0f;
+  }
+    else {
     heading_increment = (rand() % 2 == 0) ? 5.0f : -5.0f;
   }
   VERBOSE_PRINT("chooseDir: L:%.2f R:%.2f → increment=%.1f\n",
@@ -495,10 +504,11 @@ static void chooseDirectionalIncrement(void)
 void cnn_avoid_set_trajectory(uint8_t traj_id)
 {
   switch (traj_id) {
-    case 0: active_trajectory = TRAJ_CIRCLE;       break;
-    case 1: active_trajectory = TRAJ_FIGURE_EIGHT; break;
-    case 2: active_trajectory = TRAJ_LAWNMOWER;    break;
-    default: active_trajectory = TRAJ_FIGURE_EIGHT; break;
+    case 0: active_trajectory = TRAJ_NONE;         break;
+    case 1: active_trajectory = TRAJ_CIRCLE;       break;
+    case 2: active_trajectory = TRAJ_FIGURE_EIGHT; break;
+    case 3: active_trajectory = TRAJ_LAWNMOWER;    break;
+    default: active_trajectory = TRAJ_NONE;        break;
   }
   traj_angle     = 0.0f;
   obstacle_angle = 0.0f;

@@ -67,7 +67,7 @@
     <!-- ==================== CNN VISION + AVOIDANCE ==================== -->
     <module name="cnn_vision">
       <define name="CNN_VISION_CAMERA" value="front_camera"/>
-      <define name="CNN_VISION_FPS" value="0"/>
+      <define name="CNN_VISION_FPS" value="1"/>
     </module>
     <module name="cnn_avoid"/>
     <!-- ================================================================ -->
