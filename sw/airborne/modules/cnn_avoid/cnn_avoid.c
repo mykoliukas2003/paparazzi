@@ -74,9 +74,9 @@ enum trajectory_type_t {
  * The CNN outputs values in a model-specific range (typically [0, 255]).
  * Higher = more free space.  Tune these to your model's output scale.
  */
-float cnn_safe_distance_threshold    = 0.48f;   // hard stop
-float cnn_caution_distance_threshold = 0.53f;   // slow down
-float cnn_caution_exit_threshold     = 0.57f;   // hysteresis exit
+float cnn_safe_distance_threshold    = 0.15f;   // tune after seeing logs
+float cnn_caution_distance_threshold = 0.20f;   // tune after seeing logs
+float cnn_caution_exit_threshold     = 0.25f;   // tune after seeing logs
 
 /* Low-pass filter on straight depth (0 = no filter, 1 = frozen) */
 float cnn_depth_filter_alpha = 0.7f;
@@ -87,7 +87,7 @@ const int16_t max_trajectory_confidence = 3;
 
 /* Trajectory parameters */
 float traj_circle_radius = 1.8f;
-float traj_circle_speed  = 0.05f;
+float traj_circle_speed  = 0.02f;
 float traj_eight_scale   = 1.6f;
 float traj_lawn_step     = 0.5f;
 
@@ -163,34 +163,20 @@ void cnn_avoid_init(void)
 /*    Map 7-block vector to left/straight/right  */
 /* ============================================= */
 
-/**
- * @brief Reads cnn_vision_nav_vector[0..6] and computes
- *        depth_left, depth_straight, depth_right.
- *
- * Uses the MINIMUM within each region so the closest
- * obstacle in that direction dominates.
- */
 static void update_depths_from_nav_vector(void)
 {
-  if (!cnn_vision_nav_valid) {
-    /* No data yet — keep previous values */
-    return;
-  }
+  if (!cnn_vision_nav_valid) return;
 
   const float *v = cnn_vision_nav_vector;
 
-  /* Left: blocks 0-1 */
-  depth_left = v[0];
-  if (v[1] < depth_left) depth_left = v[1];
+  /* Left: average of blocks 0-1 */
+  depth_left = (v[0] + v[1]) / 2.0f;
 
-  /* Straight: blocks 2-4 */
-  depth_straight = v[2];
-  if (v[3] < depth_straight) depth_straight = v[3];
-  if (v[4] < depth_straight) depth_straight = v[4];
+  /* Straight: average of blocks 2-4 */
+  depth_straight = (v[2] + v[3] + v[4]) / 3.0f;
 
-  /* Right: blocks 5-6 */
-  depth_right = v[5];
-  if (v[6] < depth_right) depth_right = v[6];
+  /* Right: average of blocks 5-6 */
+  depth_right = (v[5] + v[6]) / 2.0f;
 }
 
 /* ================================ */

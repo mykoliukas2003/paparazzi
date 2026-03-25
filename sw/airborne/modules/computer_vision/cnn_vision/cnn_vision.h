@@ -20,6 +20,8 @@ extern float cnn_vision_nav_vector[CNN_VISION_NUM_BLOCKS];
 /** Set to true once the first valid inference has completed. */
 extern bool cnn_vision_nav_valid;
 
+extern uint8_t cnn_vision_draw;
+
 extern void cnn_vision_init(void);
 extern void cnn_vision_close(void);
 
