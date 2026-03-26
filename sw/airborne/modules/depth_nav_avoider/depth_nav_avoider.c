@@ -351,7 +351,7 @@ void depth_nav_avoider_periodic(void)
           if (dist_skip < 0) dist_skip += 2.0f * M_PI;
 
           if (dist_cur > dist_skip) {
-            traj_angle = cur_angle + 0.8f;
+            traj_angle = cur_angle + 0.5f;
           } else {
             traj_angle = skip_angle;
           }
@@ -468,10 +468,8 @@ static void updateTrajectoryWaypoint(void)
       return;
   }
 
+  moveWaypointXY(WP_GOAL, target_x, target_y);
   set_nav_heading_towards(target_x, target_y);
-  
-  // Place the goal slightly in front of the drone's *current physical nose direction*
-  moveWaypointForward(WP_GOAL, maxDistance);
 }
 
 /* ================================ */
