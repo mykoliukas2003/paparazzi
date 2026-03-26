@@ -76,16 +76,16 @@ enum trajectory_type_t {
  *
  * Scale is [0, 255]. Increase to react earlier; decrease for more aggressive flying.
  */
-float safe_distance_threshold    = 130.0f;
-float caution_distance_threshold = 150.0f;
+float safe_distance_threshold    = 55.0f;
+float caution_distance_threshold = 60.0f;
 
 /* Low-pass filter alpha for all three depth channels.
  * 0 = frozen (no update), 1 = raw pass-through (no smoothing).
  * Tunable live from GCS. */
-float depth_filter_alpha = 0.3f;
+float depth_filter_alpha = 0.6f;
 
 /* Max forward displacement per cycle [m] */
-float maxDistance = 1.0f;
+float maxDistance = 0.5f;
 
 /* Confidence system */
 const int16_t max_trajectory_confidence = 3;
@@ -351,7 +351,7 @@ void depth_nav_avoider_periodic(void)
           if (dist_skip < 0) dist_skip += 2.0f * M_PI;
 
           if (dist_cur > dist_skip) {
-            traj_angle = cur_angle + 0.3f;
+            traj_angle = cur_angle + 0.8f;
           } else {
             traj_angle = skip_angle;
           }
@@ -468,8 +468,10 @@ static void updateTrajectoryWaypoint(void)
       return;
   }
 
-  moveWaypointXY(WP_GOAL, target_x, target_y);
   set_nav_heading_towards(target_x, target_y);
+  
+  // Place the goal slightly in front of the drone's *current physical nose direction*
+  moveWaypointForward(WP_GOAL, maxDistance);
 }
 
 /* ================================ */
