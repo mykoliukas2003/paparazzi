@@ -34,9 +34,9 @@ extern float maxDistance;
 
 /** Circle trajectory radius [m] */
 extern float traj_circle_radius;
-
+extern float traj_circle_speed;
+extern float depth_filter_alpha;
 /** Figure-eight / lawnmower scale [m] */
-extern float traj_eight_scale;
 
 extern float TURN_BASE_DEG;
 extern float RANDOM_EXTRA_DEG;
